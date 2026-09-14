@@ -13,6 +13,15 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.view.View;
 
+// ИСПРАВЛЕНО: добавлены импорты для addLog() и makeRequest()
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
 public class PhoneProxy extends Activity {
     
     // UI
@@ -27,7 +36,7 @@ public class PhoneProxy extends Activity {
     private ProxyService proxyService;
     private boolean isServiceBound = false;
 
-        // ===== API KEY =====
+    // ===== API KEY =====
     private android.widget.EditText apiKeyInput;
     private android.widget.LinearLayout apiKeyLayout;
     private static final String PREFS_NAME = "PhoneProxyPrefs";
@@ -35,6 +44,10 @@ public class PhoneProxy extends Activity {
     private static final String KEY_PARTNER_ID = "partner_id";
 
     private static final String KEY_DEVICE_NAME = "device_name";
+
+    // ИСПРАВЛЕНО: константа использовалась в validateApiKey/registerDeviceWithKey,
+    // но не была объявлена в классе — компилятор падал на "cannot find symbol".
+    private static final String SERVER_URL = "https://svoyaigra.pro/api/proxy.php";
     
     // Соединение с Service
     private ServiceConnection serviceConnection = new ServiceConnection() {
@@ -68,8 +81,6 @@ public class PhoneProxy extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
-        
-        
         // UI
         statusText = (TextView) findViewById(R.id.statusText);
         logText = (TextView) findViewById(R.id.logText);
@@ -90,18 +101,9 @@ public class PhoneProxy extends Activity {
             public void onClick(View v) {
                 // ИСПРАВЛЕНО: ВСЕГДА запускаем сервис через startForegroundService,
                 // а не только startProxy() на привязанном экземпляре.
-                //
-                // Раньше, если bind уже прошёл, вызывался только proxyService.startProxy().
-                // Сервис оставался "bound-only" (не started), и при onStop -> unbindService
-                // Android его уничтожал. После повторного открытия приложения сервис
-                // создавался заново с пустыми isRunning/token/logBuilder.
-                //
-                // Теперь сервис становится started foreground service -> переживает unbind.
                 startProxyService();
                 
                 // Если уже привязаны, дёрнем startProxy() для мгновенного отклика UI.
-                // Guard "if (isRunning) return;" в ProxyService.startProxy() не даст
-                // запустить второй цикл опроса, когда чуть позже придёт onStartCommand.
                 if (proxyService != null) {
                     proxyService.startProxy();
                 }
@@ -316,32 +318,32 @@ public class PhoneProxy extends Activity {
                         String partnerName = extractJsonField(response, "partner_name");
                         
                         if (partnerId != null) {
-                                // Сохраняем
-                                android.content.SharedPreferences prefs = 
-                                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-                                android.content.SharedPreferences.Editor editor = prefs.edit();
-                                editor.putString(KEY_API_KEY, apiKey);
-                                editor.putInt(KEY_PARTNER_ID, Integer.parseInt(partnerId));
-                                editor.apply();
-                                
-                                addLog("✅ Привязано к пользователю: " + 
-                                    (partnerName != null ? partnerName : "ID: " + partnerId));
-                                
-                                // ИСПРАВЛЕНО: сразу регистрируем устройство на сервере,
-                                // чтобы строка в proxy_devices появилась уже сейчас, а не после
-                                // первого нажатия «Старт». Повторный register из ProxyService
-                                // найдёт эту же строку по (device_name, partner_id) и обновит токен.
-                                registerDeviceWithKey(apiKey);
-                                
-                                runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        android.widget.Toast.makeText(PhoneProxy.this, 
-                                            "✅ Успешно привязано!", 
-                                            android.widget.Toast.LENGTH_LONG).show();
-                                    }
-                                });
-                            }
+                            // Сохраняем
+                            android.content.SharedPreferences prefs = 
+                                getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                            android.content.SharedPreferences.Editor editor = prefs.edit();
+                            editor.putString(KEY_API_KEY, apiKey);
+                            editor.putInt(KEY_PARTNER_ID, Integer.parseInt(partnerId));
+                            editor.apply();
+                            
+                            addLog("✅ Привязано к пользователю: " + 
+                                (partnerName != null ? partnerName : "ID: " + partnerId));
+                            
+                            // ИСПРАВЛЕНО: сразу регистрируем устройство на сервере,
+                            // чтобы строка в proxy_devices появилась уже сейчас, а не после
+                            // первого нажатия «Старт». Повторный register из ProxyService
+                            // найдёт эту же строку по (device_name, partner_id) и обновит токен.
+                            registerDeviceWithKey(apiKey);
+                            
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    android.widget.Toast.makeText(PhoneProxy.this, 
+                                        "✅ Успешно привязано!", 
+                                        android.widget.Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        }
                         
                     } else {
                         // Ключ невалиден
@@ -380,86 +382,186 @@ public class PhoneProxy extends Activity {
         return prefs.getString(KEY_API_KEY, null);
     }
 
-// ИСПРАВЛЕНО: уникальное имя устройства на основе ANDROID_ID.
-// Создаётся один раз при первом запуске и сохраняется в SharedPreferences.
-// Используется и здесь, и в ProxyService — оба читают из "PhoneProxyPrefs".
-private String getOrCreateDeviceName() {
-    android.content.SharedPreferences prefs = 
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-    
-    String deviceName = prefs.getString(KEY_DEVICE_NAME, null);
-    if (deviceName != null && !deviceName.isEmpty()) {
+    // ИСПРАВЛЕНО: уникальное имя устройства на основе ANDROID_ID.
+    // Создаётся один раз при первом запуске и сохраняется в SharedPreferences.
+    // Используется и здесь, и в ProxyService — оба читают из "PhoneProxyPrefs".
+    private String getOrCreateDeviceName() {
+        android.content.SharedPreferences prefs = 
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        
+        String deviceName = prefs.getString(KEY_DEVICE_NAME, null);
+        if (deviceName != null && !deviceName.isEmpty()) {
+            return deviceName;
+        }
+        
+        // Пытаемся получить ANDROID_ID
+        String androidId = null;
+        try {
+            androidId = android.provider.Settings.Secure.getString(
+                getContentResolver(),
+                android.provider.Settings.Secure.ANDROID_ID
+            );
+        } catch (Exception e) {
+            // ignore — используем fallback
+        }
+        
+        // Проверки:
+        //  - null / пусто — не получилось
+        //  - "9774d56d682e549c" — известный баг старых прошивок
+        //  - "unknown" — тоже бывает
+        boolean isBad = (androidId == null || androidId.isEmpty() 
+                         || "9774d56d682e549c".equals(androidId)
+                         || "unknown".equalsIgnoreCase(androidId));
+        
+        if (isBad) {
+            // Fallback: случайный UUID, сохранится навсегда
+            androidId = java.util.UUID.randomUUID().toString().replace("-", "");
+        }
+        
+        // Берём первые 8 символов — этого достаточно для уникальности
+        String shortId = androidId.substring(0, Math.min(8, androidId.length()));
+        deviceName = "Android_" + shortId;
+        
+        prefs.edit().putString(KEY_DEVICE_NAME, deviceName).apply();
         return deviceName;
     }
-    
-    // Пытаемся получить ANDROID_ID
-    String androidId = null;
-    try {
-        androidId = android.provider.Settings.Secure.getString(
-            getContentResolver(),
-            android.provider.Settings.Secure.ANDROID_ID
-        );
-    } catch (Exception e) {
-        // ignore — используем fallback
-    }
-    
-    // Проверки:
-    //  - null / пусто — не получилось
-    //  - "9774d56d682e549c" — известный баг старых прошивок, когда у всех устройств одно значение
-    //  - "unknown" — тоже бывает
-    boolean isBad = (androidId == null || androidId.isEmpty() 
-                     || "9774d56d682e549c".equals(androidId)
-                     || "unknown".equalsIgnoreCase(androidId));
-    
-    if (isBad) {
-        // Fallback: случайный UUID, сохранится навсегда
-        androidId = java.util.UUID.randomUUID().toString().replace("-", "");
-    }
-    
-    // Берём первые 8 символов — этого достаточно для уникальности
-    // и удобно смотрится в БД
-    String shortId = androidId.substring(0, Math.min(8, androidId.length()));
-    deviceName = "Android_" + shortId;
-    
-    prefs.edit().putString(KEY_DEVICE_NAME, deviceName).apply();
-    return deviceName;
-}
 
     // ИСПРАВЛЕНО: регистрация устройства на сервере сразу после ввода API-ключа.
-// Отправляет тот же запрос, что делает ProxyService.register(), но из Activity —
-// чтобы не ждать нажатия «Старт».
-private void registerDeviceWithKey(final String apiKey) {
-    new Thread(new Runnable() {
-        @Override
-        public void run() {
-            try {
-                String deviceName = getOrCreateDeviceName();
-                String response = makeRequest(SERVER_URL,
-                    "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\"," +
-                    "\"api_key\":\"" + apiKey + "\"}");
-                
-                // Убираем PHP warnings, если вдруг есть
-                if (response.contains("<br />")) {
-                    int jsonStart = response.indexOf("{\"success\"");
-                    if (jsonStart >= 0) {
-                        response = response.substring(jsonStart);
+    // Отправляет тот же запрос, что делает ProxyService.register(), но из Activity —
+    // чтобы не ждать нажатия «Старт».
+    private void registerDeviceWithKey(final String apiKey) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String deviceName = getOrCreateDeviceName();
+                    String response = makeRequest(SERVER_URL,
+                        "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\"," +
+                        "\"api_key\":\"" + apiKey + "\"}");
+                    
+                    // Убираем PHP warnings, если вдруг есть
+                    if (response.contains("<br />")) {
+                        int jsonStart = response.indexOf("{\"success\"");
+                        if (jsonStart >= 0) {
+                            response = response.substring(jsonStart);
+                        }
+                    }
+                    
+                    if (response.contains("\"token\"")) {
+                        String token = extractJsonField(response, "token");
+                        addLog("✅ Устройство зарегистрировано на сервере" +
+                               (token != null ? " (token: " + 
+                                token.substring(0, Math.min(12, token.length())) + "...)" : ""));
+                    } else {
+                        addLog("⚠️ Регистрация устройства: " + response);
+                    }
+                } catch (final Exception e) {
+                    addLog("❌ Ошибка регистрации устройства: " + e.getMessage());
+                }
+            }
+        }).start();
+    }
+
+    // ===== ХЕЛПЕРЫ (скопированы из ProxyService) =====
+    // ИСПРАВЛЕНО: эти три метода и SERVER_URL раньше вызывались, но не были
+    // определены в этом классе. validateApiKey() и registerDeviceWithKey()
+    // работают до привязки к сервису, поэтому нужны свои реализации.
+    
+    private void addLog(final String message) {
+        android.util.Log.d("PhoneProxy", message);
+        
+        // Пишем в UI-лог, если он уже создан
+        if (logText != null) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        String timestamp = new SimpleDateFormat("HH:mm:ss.SSS").format(new Date());
+                        logText.append("[" + timestamp + "] " + message + "\n");
+                        
+                        if (logScrollView != null) {
+                            logScrollView.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    logScrollView.fullScroll(ScrollView.FOCUS_DOWN);
+                                }
+                            });
+                        }
+                    } catch (Exception e) {
+                        // ignore
                     }
                 }
-                
-                if (response.contains("\"token\"")) {
-                    String token = extractJsonField(response, "token");
-                    addLog("✅ Устройство зарегистрировано на сервере" +
-                           (token != null ? " (token: " + 
-                            token.substring(0, Math.min(12, token.length())) + "...)" : ""));
-                } else {
-                    addLog("⚠️ Регистрация устройства: " + response);
-                }
-            } catch (final Exception e) {
-                addLog("❌ Ошибка регистрации устройства: " + e.getMessage());
-            }
+            });
         }
-    }).start();
-}
+    }
+    
+    private String makeRequest(String urlString, String jsonBody) throws Exception {
+        URL url = new URL(urlString);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(30000);
+        
+        OutputStream os = conn.getOutputStream();
+        os.write(jsonBody.getBytes("UTF-8"));
+        os.close();
+        
+        int responseCode = conn.getResponseCode();
+        
+        BufferedReader reader;
+        if (responseCode >= 400) {
+            reader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+        } else {
+            reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        }
+        
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        reader.close();
+        
+        if (responseCode >= 400) {
+            throw new Exception("HTTP " + responseCode + ": " + 
+                (response.length() > 200 ? response.substring(0, 200) : response.toString()));
+        }
+        
+        return response.toString();
+    }
+    
+    private String extractJsonField(String json, String field) {
+        try {
+            String search = "\"" + field + "\":\"";
+            int start = json.indexOf(search);
+            if (start >= 0) {
+                start += search.length();
+                int end = json.indexOf("\"", start);
+                if (end > start) {
+                    return json.substring(start, end);
+                }
+            }
+            // Попытка для числового значения без кавычек: "partner_id":123
+            search = "\"" + field + "\":";
+            start = json.indexOf(search);
+            if (start >= 0) {
+                start += search.length();
+                int end = start;
+                while (end < json.length() && 
+                       (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
+                    end++;
+                }
+                if (end > start) {
+                    return json.substring(start, end);
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return null;
+    }
 
     private void shareLog() {
         String logContent = "";
