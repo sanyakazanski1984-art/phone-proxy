@@ -47,6 +47,9 @@ public class PhoneProxy extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
+        // Останавливаем предыдущий Service если был
+        Intent stopServiceIntent = new Intent(this, ProxyService.class);
+        stopService(stopServiceIntent);
         
         // Инициализация UI
         statusText = (TextView) findViewById(R.id.statusText);
@@ -276,67 +279,90 @@ public class PhoneProxy extends Activity {
     
     // ===== ВЫПОЛНЕНИЕ ЗАДАНИЙ =====
     
-    private void executeTasks(String response) {
+        private void executeTasks(String response) {
         try {
-            String[] parts = response.split("\\{\"id\":\"");
+            // Убираем PHP warnings
+            if (response.contains("<br />")) {
+                int jsonStart = response.indexOf("{\"success\"");
+                if (jsonStart >= 0) {
+                    response = response.substring(jsonStart);
+                }
+            }
             
-            int taskCount = parts.length - 1;
-            addLog("📦 Заданий: " + taskCount);
+            addLog("📋 Сырой ответ: " + truncate(response, 300));
+            
+            String[] parts = response.split("\\{\"id\":\"");
             
             for (int i = 1; i < parts.length; i++) {
                 if (!isRunning) break;
                 
                 String part = parts[i];
                 
-                // Парсинг полей
-                String taskId = extractJsonField(part, "id");
+                // ПАРСИНГ TASK ID (исправлено!)
+                String taskId = null;
+                int idEnd = part.indexOf("\"");
+                if (idEnd > 0) {
+                    taskId = part.substring(0, idEnd);
+                }
+                
+                // Если не нашли - пробуем другой способ
+                if (taskId == null || taskId.equals("null")) {
+                    int taskIdStart = part.indexOf("\"id\":") ;
+                    if (taskIdStart >= 0) {
+                        taskIdStart += 5;
+                        int taskIdEnd = part.indexOf(",", taskIdStart);
+                        if (taskIdEnd > taskIdStart) {
+                            taskId = part.substring(taskIdStart, taskIdEnd)
+                                        .replace("\"", "").trim();
+                        }
+                    }
+                }
+                
+                // Парсинг URL
                 String url = extractJsonField(part, "url");
                 String method = extractJsonField(part, "method");
-                String headersJson = extractJsonField(part, "headers");
-                String body = extractJsonField(part, "body");
                 
-                if (url != null) {
-                    // Убираем экранирование URL
+                if (url != null && taskId != null) {
+                    // Убираем экранирование
                     url = url.replace("\\/", "/")
                              .replace("\\\"", "\"");
-                    
-                    // Убираем экранирование method
-                    if (method != null) {
-                        method = method.replace("\\/", "/");
-                    }
-                    
-                    // Парсим заголовки
-                    Map<String, String> headers = parseHeaders(headersJson);
-                    
-                    // Убираем экранирование body
-                    if (body != null) {
-                        body = body.replace("\\/", "/")
-                                   .replace("\\\"", "\"")
-                                   .replace("\\n", "\n")
-                                   .replace("\\t", "\t");
-                    }
                     
                     if (method == null || method.isEmpty()) {
                         method = "GET";
                     }
                     
-                    addLog("📤 Задание [" + i + "/" + taskCount + "]: " + taskId);
+                    addLog("📤 Задание [" + i + "]: ID=" + taskId);
                     addLog("   URL: " + url);
                     addLog("   Метод: " + method);
                     
-                    if (!headers.isEmpty()) {
-                        addLog("   Заголовки: " + headers.size() + " шт");
-                    }
-                    
-                    executeTask(taskId, url, method, headers, body);
+                    executeTask(taskId, url, method, null, null);
                 } else {
-                    addLog("❌ Ошибка парсинга задания " + i);
+                    addLog("❌ Не удалось распарсить задание " + i);
+                    addLog("   Part: " + truncate(part, 100));
                 }
             }
             
         } catch (Exception e) {
             addLog("❌ ОШИБКА парсинга: " + e.getMessage());
         }
+    }
+    
+    // Метод для извлечения JSON поля
+    private String extractJsonField(String json, String field) {
+        try {
+            String search = "\"" + field + "\":\"";
+            int start = json.indexOf(search);
+            if (start >= 0) {
+                start += search.length();
+                int end = json.indexOf("\"", start);
+                if (end > start) {
+                    return json.substring(start, end);
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return null;
     }
     
     private void executeTask(final String taskId, final String url, final String method, 
