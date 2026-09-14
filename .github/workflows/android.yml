@@ -22,7 +22,7 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
-        packages: 'platforms;android-29 build-tools;29.0.0'
+        packages: 'platforms;android-34 build-tools;34.0.0'
 
     - name: Prepare files
       run: |
@@ -56,10 +56,10 @@ jobs:
         # 2. Компиляция Java
         javac -source 1.8 -target 1.8 -classpath "$PLATFORM" -d obj \
           gen/com/phoneproxy/R.java \
-          src/com/phoneproxy/PhoneProxy.java
+          src/com/phoneproxy/*.java
 
         # 3. DEX — все классы, включая R$...
-        "$D8" --min-api 21 --output bin/ obj/com/phoneproxy/*.class
+        "$D8" --min-api 29 --output bin/ obj/com/phoneproxy/*.class
 
         # 4. Упаковка ресурсов
         "$AAPT" package -f -M AndroidManifest.xml -S res -I "$PLATFORM" -F bin/unsigned.apk
