@@ -1,92 +1,65 @@
 package com.phoneproxy;
 
-import com.codename1.ui.Form;
-import com.codename1.ui.Label;
-import com.codename1.ui.Button;
-import com.codename1.ui.layouts.BoxLayout;
-import com.codename1.ui.Display;
-import com.codename1.ui.events.ActionEvent;
-import com.codename1.ui.events.ActionListener;
-import com.codename1.io.ConnectionRequest;
-import com.codename1.io.NetworkManager;
-import com.codename1.io.Log;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.ByteArrayOutputStream;
+import android.app.Activity;
+import android.os.Bundle;
+import android.os.Handler;
+import android.widget.Button;
+import android.widget.TextView;
+import android.view.View;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
-public class PhoneProxy {
+public class PhoneProxy extends Activity {
+    
+    private TextView statusText;
+    private Button startButton;
+    private Button stopButton;
+    private boolean isRunning = false;
+    private String token = null;
+    private Handler handler = new Handler();
     
     private static final String SERVER_URL = "https://svoyaigra.pro/api/proxy.php";
     
-    private Form mainForm;
-    private Label statusLabel;
-    private Label statsLabel;
-    private Button startButton;
-    private Button stopButton;
-    
-    private boolean isRunning = false;
-    private String token = null;
-    private int completedCount = 0;
-    private int errorCount = 0;
-    
-    public void init(Object context) {
-        Log.p("Phone Proxy: init");
-    }
-    
-    public void start() {
-        if (mainForm != null) {
-            mainForm.show();
-            return;
-        }
-        createUI();
-        mainForm.show();
-    }
-    
-    private void createUI() {
-        mainForm = new Form("Phone Proxy", new BoxLayout(BoxLayout.Y_AXIS));
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.main);
         
-        Label titleLabel = new Label("📱 Phone Proxy");
-        mainForm.add(titleLabel);
+        statusText = (TextView) findViewById(R.id.statusText);
+        startButton = (Button) findViewById(R.id.startButton);
+        stopButton = (Button) findViewById(R.id.stopButton);
         
-        statusLabel = new Label("Не подключено");
-        mainForm.add(statusLabel);
-        
-        startButton = new Button("🚀 Запустить");
-        startButton.addActionListener(new ActionListener() {
+        startButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void actionPerformed(ActionEvent evt) {
+            public void onClick(View v) {
                 startProxy();
             }
         });
-        mainForm.add(startButton);
         
-        stopButton = new Button("⏹ Остановить");
-        stopButton.addActionListener(new ActionListener() {
+        stopButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void actionPerformed(ActionEvent evt) {
+            public void onClick(View v) {
                 stopProxy();
             }
         });
-        stopButton.setVisible(false);
-        mainForm.add(stopButton);
-        
-        statsLabel = new Label("Выполнено: 0\nОшибок: 0");
-        mainForm.add(statsLabel);
     }
     
     private void startProxy() {
         isRunning = true;
         
-        Display.getInstance().callSerially(new Runnable() {
+        runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                startButton.setVisible(false);
-                stopButton.setVisible(true);
-                statusLabel.setText("Подключение...");
-                mainForm.revalidate();
+                startButton.setEnabled(false);
+                stopButton.setEnabled(true);
+                statusText.setText("Подключение...");
             }
         });
         
+        // Регистрация в отдельном потоке
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -98,106 +71,79 @@ public class PhoneProxy {
     private void stopProxy() {
         isRunning = false;
         
-        Display.getInstance().callSerially(new Runnable() {
+        runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                startButton.setVisible(true);
-                stopButton.setVisible(false);
-                statusLabel.setText("Остановлено");
-                mainForm.revalidate();
+                startButton.setEnabled(true);
+                stopButton.setEnabled(false);
+                statusText.setText("Остановлено");
             }
         });
     }
     
     private void register() {
         try {
-            ConnectionRequest request = new ConnectionRequest() {
-                @Override
-                protected void readResponse(InputStream input) throws IOException {
-                    String response = readInputStream(input);
-                    
-                    if (response.contains("\"token\"")) {
-                        int tokenStart = response.indexOf("\"token\":\"") + 9;
-                        int tokenEnd = response.indexOf("\"", tokenStart);
-                        
-                        if (tokenStart > 9 && tokenEnd > tokenStart) {
-                            final String newToken = response.substring(tokenStart, tokenEnd);
-                            
-                            Display.getInstance().callSerially(new Runnable() {
-                                @Override
-                                public void run() {
-                                    token = newToken;
-                                    statusLabel.setText("Подключено!");
-                                    
-                                    new Thread(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            startPolling();
-                                        }
-                                    }).start();
-                                }
-                            });
-                        }
-                    }
-                }
+            String response = makeRequest(SERVER_URL, 
+                "{\"action\":\"register\",\"device_name\":\"Android Phone\"}");
+            
+            if (response.contains("\"token\"")) {
+                // Простой парсинг токена
+                int start = response.indexOf("\"token\":\"") + 9;
+                int end = response.indexOf("\"", start);
                 
-                @Override
-                protected void handleException(Exception err) {
-                    Display.getInstance().callSerially(new Runnable() {
+                if (start > 9 && end > start) {
+                    token = response.substring(start, end);
+                    
+                    runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            statusLabel.setText("Ошибка: " + err.getMessage());
+                            statusText.setText("Подключено!");
                         }
                     });
+                    
+                    // Запуск цикла получения заданий
+                    getTasksLoop();
                 }
-            };
-            
-            request.setUrl(SERVER_URL);
-            request.setHttpMethod("POST");
-            request.setContentType("application/json");
-            request.setRequestBody("{\"action\":\"register\",\"device_name\":\"Android Phone\"}");
-            
-            NetworkManager.getInstance().addToQueue(request);
-            
+            }
         } catch (Exception e) {
-            Log.p("Phone Proxy: Error: " + e.getMessage());
+            final String error = e.getMessage();
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    statusText.setText("Ошибка: " + error);
+                }
+            });
         }
     }
     
-    private void startPolling() {
-        while (isRunning && token != null) {
-            try {
-                getTasks();
-                Thread.sleep(5000);
-            } catch (InterruptedException e) {
-                break;
-            }
-        }
-    }
-    
-    private void getTasks() {
-        if (token == null) return;
-        
-        ConnectionRequest request = new ConnectionRequest() {
+    private void getTasksLoop() {
+        new Thread(new Runnable() {
             @Override
-            protected void readResponse(InputStream input) throws IOException {
-                String response = readInputStream(input);
-                
-                if (response.contains("\"tasks\"") && !response.contains("[]")) {
-                    processTasks(response);
+            public void run() {
+                while (isRunning && token != null) {
+                    try {
+                        String taskResponse = makeRequest(SERVER_URL, 
+                            "{\"action\":\"get_tasks\",\"token\":\"" + token + "\"}");
+                        
+                        if (taskResponse.contains("\"tasks\"") && !taskResponse.contains("[]")) {
+                            // Есть задания
+                            executeTasks(taskResponse);
+                        }
+                        
+                        Thread.sleep(5000); // 5 секунд
+                    } catch (InterruptedException e) {
+                        break;
+                    } catch (Exception e) {
+                        // Ошибка сети
+                    }
                 }
             }
-        };
-        
-        request.setUrl(SERVER_URL);
-        request.setHttpMethod("POST");
-        request.setContentType("application/json");
-        request.setRequestBody("{\"action\":\"get_tasks\",\"token\":\"" + token + "\"}");
-        
-        NetworkManager.getInstance().addToQueueAndWait(request);
+        }).start();
     }
     
-    private void processTasks(String response) {
+    private void executeTasks(String response) {
+        // Простой парсинг заданий
+        // В реальном проекте используй JSON библиотеку
         String[] parts = response.split("\\{\"id\":\"");
         
         for (int i = 1; i < parts.length; i++) {
@@ -217,91 +163,89 @@ public class PhoneProxy {
     }
     
     private void executeTask(final String taskId, final String url) {
-        Display.getInstance().callSerially(new Runnable() {
+        runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                statusLabel.setText("Выполняю: " + url);
+                statusText.setText("Выполняю: " + url);
             }
         });
         
-        ConnectionRequest request = new ConnectionRequest() {
-            @Override
-            protected void readResponse(InputStream input) throws IOException {
-                String body = readInputStream(input);
-                submitResult(taskId, 200, body);
-                completedCount++;
-                updateStats();
-            }
+        try {
+            // Выполнение GET запроса
+            URL requestUrl = new URL(url);
+            HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(30000);
+            conn.setReadTimeout(30000);
             
-            @Override
-            protected void handleException(Exception err) {
-                submitError(taskId, err.getMessage());
-                errorCount++;
-                updateStats();
+            int responseCode = conn.getResponseCode();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            StringBuilder body = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                body.append(line);
             }
-        };
-        
-        request.setUrl(url);
-        request.setHttpMethod("GET");
-        request.setTimeout(30000);
-        
-        NetworkManager.getInstance().addToQueue(request);
-    }
-    
-    private void submitResult(String taskId, int statusCode, String body) {
-        String escaped = body.replace("\\", "\\\\")
-                             .replace("\"", "\\\"")
-                             .replace("\n", "\\n")
-                             .replace("\r", "");
-        
-        ConnectionRequest request = new ConnectionRequest();
-        request.setUrl(SERVER_URL);
-        request.setHttpMethod("POST");
-        request.setContentType("application/json");
-        request.setRequestBody("{\"action\":\"submit_result\",\"token\":\"" + token + 
-            "\",\"task_id\":\"" + taskId + 
-            "\",\"status_code\":" + statusCode + 
-            ",\"body\":\"" + escaped + "\"}");
-        
-        NetworkManager.getInstance().addToQueue(request);
-    }
-    
-    private void submitError(String taskId, String error) {
-        ConnectionRequest request = new ConnectionRequest();
-        request.setUrl(SERVER_URL);
-        request.setHttpMethod("POST");
-        request.setContentType("application/json");
-        request.setRequestBody("{\"action\":\"submit_result\",\"token\":\"" + token + 
-            "\",\"task_id\":\"" + taskId + 
-            "\",\"error\":\"" + error + "\"}");
-        
-        NetworkManager.getInstance().addToQueue(request);
-    }
-    
-    private String readInputStream(InputStream input) throws IOException {
-        ByteArrayOutputStream result = new ByteArrayOutputStream();
-        byte[] buffer = new byte[1024];
-        int length;
-        while ((length = input.read(buffer)) != -1) {
-            result.write(buffer, 0, length);
+            reader.close();
+            
+            // Отправка результата
+            sendResult(taskId, responseCode, body.toString());
+            
+        } catch (Exception e) {
+            sendError(taskId, e.getMessage());
         }
-        return result.toString("UTF-8");
     }
     
-    private void updateStats() {
-        Display.getInstance().callSerially(new Runnable() {
-            @Override
-            public void run() {
-                statsLabel.setText("Выполнено: " + completedCount + 
-                    "\nОшибок: " + errorCount);
-                mainForm.revalidate();
-            }
-        });
-    }
-    
-    public void stop() {
-        if (isRunning) {
-            stopProxy();
+    private void sendResult(String taskId, int statusCode, String body) {
+        try {
+            String escapedBody = body.replace("\\", "\\\\")
+                                     .replace("\"", "\\\"")
+                                     .replace("\n", "\\n")
+                                     .replace("\r", "");
+            
+            makeRequest(SERVER_URL, 
+                "{\"action\":\"submit_result\",\"token\":\"" + token + 
+                "\",\"task_id\":\"" + taskId + 
+                "\",\"status_code\":" + statusCode + 
+                ",\"body\":\"" + escapedBody + "\"}");
+        } catch (Exception e) {
+            // Ошибка отправки
         }
+    }
+    
+    private void sendError(String taskId, String error) {
+        try {
+            makeRequest(SERVER_URL, 
+                "{\"action\":\"submit_result\",\"token\":\"" + token + 
+                "\",\"task_id\":\"" + taskId + 
+                "\",\"error\":\"" + error + "\"}");
+        } catch (Exception e) {
+            // Ошибка отправки
+        }
+    }
+    
+    private String makeRequest(String urlString, String jsonBody) throws Exception {
+        URL url = new URL(urlString);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(30000);
+        
+        // Отправка тела запроса
+        OutputStream os = conn.getOutputStream();
+        os.write(jsonBody.getBytes("UTF-8"));
+        os.close();
+        
+        // Чтение ответа
+        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        reader.close();
+        
+        return response.toString();
     }
 }
