@@ -13,6 +13,15 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.view.View;
 
+// ИСПРАВЛЕНО: добавлены импорты для методов, скопированных из ProxyService
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
 public class PhoneProxy extends Activity {
     
     // UI
@@ -26,6 +35,17 @@ public class PhoneProxy extends Activity {
     // Service
     private ProxyService proxyService;
     private boolean isServiceBound = false;
+
+    // ===== API KEY =====
+    private android.widget.EditText apiKeyInput;
+    private android.widget.LinearLayout apiKeyLayout;
+    private static final String PREFS_NAME = "PhoneProxyPrefs";
+    private static final String KEY_API_KEY = "api_key";
+    private static final String KEY_PARTNER_ID = "partner_id";
+    
+    // ИСПРАВЛЕНО: этот URL теперь определён и в Activity — нужен для
+    // validateApiKey(), которая вызывается из onCreate до привязки к сервису.
+    private static final String SERVER_URL = "https://svoyaigra.pro/api/proxy.php";
     
     // Соединение с Service
     private ServiceConnection serviceConnection = new ServiceConnection() {
@@ -58,7 +78,7 @@ public class PhoneProxy extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
-        
+
         // UI
         statusText = (TextView) findViewById(R.id.statusText);
         logText = (TextView) findViewById(R.id.logText);
@@ -69,6 +89,9 @@ public class PhoneProxy extends Activity {
         stopButton = (Button) findViewById(R.id.stopButton);
         Button clearLogButton = (Button) findViewById(R.id.clearLogButton);
         Button shareLogButton = (Button) findViewById(R.id.shareLogButton);
+
+        // === ПРОВЕРКА API КЛЮЧА ===
+        checkApiKey();
         
         // Обработчики
         startButton.setOnClickListener(new View.OnClickListener() {
@@ -206,6 +229,261 @@ public class PhoneProxy extends Activity {
         });
     }
     
+    // ===== API KEY МЕТОДЫ =====
+    
+    private void checkApiKey() {
+        android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String savedApiKey = prefs.getString(KEY_API_KEY, null);
+        
+        if (savedApiKey == null || savedApiKey.isEmpty()) {
+            // Первый запуск - показываем окно ввода
+            showApiKeyDialog();
+        } else {
+            // Ключ есть - пропускаем
+            addLog("🔑 Приложение привязано к пользователю (ID: " + 
+                   prefs.getInt(KEY_PARTNER_ID, 0) + ")");
+        }
+    }
+    
+    private void showApiKeyDialog() {
+        // Создаём layout программно
+        apiKeyLayout = new android.widget.LinearLayout(this);
+        apiKeyLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        apiKeyLayout.setPadding(50, 30, 50, 30);
+        
+        android.widget.TextView title = new android.widget.TextView(this);
+        title.setText("Введите API ключ:");
+        title.setTextSize(18);
+        title.setPadding(0, 0, 0, 20);
+        apiKeyLayout.addView(title);
+        
+        android.widget.TextView desc = new android.widget.TextView(this);
+        desc.setText("Ключ находится в вашем личном кабинете на сайте");
+        desc.setTextSize(14);
+        desc.setPadding(0, 0, 0, 20);
+        apiKeyLayout.addView(desc);
+        
+        apiKeyInput = new android.widget.EditText(this);
+        apiKeyInput.setHint("Например: abc123xyz...");
+        apiKeyInput.setTextSize(16);
+        apiKeyLayout.addView(apiKeyInput);
+        
+        // Диалог
+        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
+        builder.setTitle("🔑 Привязка к аккаунту");
+        builder.setView(apiKeyLayout);
+        builder.setCancelable(false);
+        
+        builder.setPositiveButton("Проверить", new android.content.DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(android.content.DialogInterface dialog, int which) {
+                String apiKey = apiKeyInput.getText().toString().trim();
+                if (!apiKey.isEmpty()) {
+                    validateApiKey(apiKey);
+                } else {
+                    android.widget.Toast.makeText(PhoneProxy.this, 
+                        "Введите ключ!", android.widget.Toast.LENGTH_SHORT).show();
+                    showApiKeyDialog(); // Показываем снова
+                }
+            }
+        });
+        
+        builder.setNegativeButton("Позже", new android.content.DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(android.content.DialogInterface dialog, int which) {
+                android.widget.Toast.makeText(PhoneProxy.this, 
+                    "Без ключа приложение будет работать без привязки", 
+                    android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+        
+        builder.show();
+    }
+    
+    private void validateApiKey(final String apiKey) {
+        addLog("🔑 Проверка ключа: " + apiKey.substring(0, Math.min(8, apiKey.length())) + "...");
+        
+        // Проверка на сервере
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String response = makeRequest(SERVER_URL, 
+                        "{\"action\":\"validate_api_key\",\"api_key\":\"" + apiKey + "\"}");
+                    
+                    // Убираем PHP warnings
+                    if (response.contains("<br />")) {
+                        int jsonStart = response.indexOf("{\"success\"");
+                        if (jsonStart >= 0) {
+                            response = response.substring(jsonStart);
+                        }
+                    }
+                    
+                    if (response.contains("\"success\":true")) {
+                        // Ключ валиден - извлекаем partner_id
+                        String partnerId = extractJsonField(response, "partner_id");
+                        String partnerName = extractJsonField(response, "partner_name");
+                        
+                        if (partnerId != null) {
+                            // Сохраняем
+                            android.content.SharedPreferences prefs = 
+                                getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                            android.content.SharedPreferences.Editor editor = prefs.edit();
+                            editor.putString(KEY_API_KEY, apiKey);
+                            editor.putInt(KEY_PARTNER_ID, Integer.parseInt(partnerId));
+                            editor.apply();
+                            
+                            addLog("✅ Привязано к пользователю: " + 
+                                   (partnerName != null ? partnerName : "ID: " + partnerId));
+                            
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    android.widget.Toast.makeText(PhoneProxy.this, 
+                                        "✅ Успешно привязано!", 
+                                        android.widget.Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        }
+                        
+                    } else {
+                        // Ключ невалиден
+                        addLog("❌ Неверный API ключ");
+                        
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                android.widget.Toast.makeText(PhoneProxy.this, 
+                                    "❌ Неверный ключ! Попробуйте снова", 
+                                    android.widget.Toast.LENGTH_LONG).show();
+                                showApiKeyDialog(); // Показываем снова
+                            }
+                        });
+                    }
+                    
+                } catch (final Exception e) {
+                    addLog("❌ Ошибка проверки ключа: " + e.getMessage());
+                    
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            android.widget.Toast.makeText(PhoneProxy.this, 
+                                "Ошибка соединения: " + e.getMessage(), 
+                                android.widget.Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+    
+    // Получить сохранённый API ключ
+    private String getSavedApiKey() {
+        android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        return prefs.getString(KEY_API_KEY, null);
+    }
+
+    // ===== ХЕЛПЕРЫ (скопированы из ProxyService) =====
+    // ИСПРАВЛЕНО: методы ниже раньше вызывались, но не были определены
+    // в этом классе. Теперь у Activity есть своя реализация, потому что
+    // validateApiKey() работает до того, как сервис вообще создан.
+    
+    private void addLog(final String message) {
+        android.util.Log.d("PhoneProxy", message);
+        
+        // Пишем в UI-лог, если он уже создан
+        if (logText != null) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        String timestamp = new SimpleDateFormat("HH:mm:ss.SSS").format(new Date());
+                        logText.append("[" + timestamp + "] " + message + "\n");
+                        
+                        if (logScrollView != null) {
+                            logScrollView.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    logScrollView.fullScroll(ScrollView.FOCUS_DOWN);
+                                }
+                            });
+                        }
+                    } catch (Exception e) {
+                        // ignore
+                    }
+                }
+            });
+        }
+    }
+    
+    private String makeRequest(String urlString, String jsonBody) throws Exception {
+        URL url = new URL(urlString);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(30000);
+        
+        OutputStream os = conn.getOutputStream();
+        os.write(jsonBody.getBytes("UTF-8"));
+        os.close();
+        
+        int responseCode = conn.getResponseCode();
+        
+        BufferedReader reader;
+        if (responseCode >= 400) {
+            reader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+        } else {
+            reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        }
+        
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        reader.close();
+        
+        if (responseCode >= 400) {
+            throw new Exception("HTTP " + responseCode + ": " + 
+                (response.length() > 200 ? response.substring(0, 200) : response.toString()));
+        }
+        
+        return response.toString();
+    }
+    
+    private String extractJsonField(String json, String field) {
+        try {
+            String search = "\"" + field + "\":\"";
+            int start = json.indexOf(search);
+            if (start >= 0) {
+                start += search.length();
+                int end = json.indexOf("\"", start);
+                if (end > start) {
+                    return json.substring(start, end);
+                }
+            }
+            // Попытка для числового значения без кавычек: "partner_id":123
+            search = "\"" + field + "\":";
+            start = json.indexOf(search);
+            if (start >= 0) {
+                start += search.length();
+                int end = start;
+                while (end < json.length() && 
+                       (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
+                    end++;
+                }
+                if (end > start) {
+                    return json.substring(start, end);
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return null;
+    }
+
     private void shareLog() {
         String logContent = "";
         if (proxyService != null) {
