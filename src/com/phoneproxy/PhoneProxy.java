@@ -660,18 +660,35 @@ public class PhoneProxy extends Activity {
     // ===== ЖИЗНЕННЫЙ ЦИКЛ =====
     
     @Override
-    protected void onDestroy() {
-        isRunning = false;
-        
-        Intent serviceIntent = new Intent(this, ProxyService.class);
-        stopService(serviceIntent);
-        
-        super.onDestroy();
+    public void onBackPressed() {
+        // При нажатии НАЗАД — сворачиваем в фон, НЕ закрываем
+        moveTaskToBack(true);
+        addLog("📱 Свернуто (прокси работает в фоне)");
     }
     
     @Override
     protected void onPause() {
-        // НЕ останавливаем - работаем в фоне через Foreground Service
         super.onPause();
+        // При сворачивании — продолжаем работать
+        addLog("📱 Приложение свёрнуто (работа продолжается)");
+    }
+    
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // Ничего НЕ делаем — Foreground Service работает
+        android.util.Log.d("PhoneProxy", "App stopped, service continues");
+    }
+    
+    @Override
+    protected void onDestroy() {
+        // НЕ останавливаем — пусть Service работает дальше
+        // Даже если Activity уничтожено, прокси продолжает работать
+        
+        android.util.Log.d("PhoneProxy", "Activity destroyed, service continues");
+        
+        // isRunning НЕ сбрасываем — сервис работает
+        
+        super.onDestroy();
     }
 }
