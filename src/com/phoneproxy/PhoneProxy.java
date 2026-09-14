@@ -347,23 +347,7 @@ public class PhoneProxy extends Activity {
         }
     }
     
-    // Метод для извлечения JSON поля
-    private String extractJsonField(String json, String field) {
-        try {
-            String search = "\"" + field + "\":\"";
-            int start = json.indexOf(search);
-            if (start >= 0) {
-                start += search.length();
-                int end = json.indexOf("\"", start);
-                if (end > start) {
-                    return json.substring(start, end);
-                }
-            }
-        } catch (Exception e) {
-            // ignore
-        }
-        return null;
-    }
+
     
     private void executeTask(final String taskId, final String url, final String method, 
                              final Map<String, String> headers, final String body) {
