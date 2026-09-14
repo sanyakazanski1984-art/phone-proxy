@@ -28,6 +28,7 @@ public class PhoneProxy extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
+        
         StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
         StrictMode.setThreadPolicy(policy);
         
@@ -86,8 +87,12 @@ public class PhoneProxy extends Activity {
     
     private void register() {
         try {
+            android.util.Log.d("PhoneProxy", "Начинаю регистрацию...");
+            
             String response = makeRequest(SERVER_URL, 
                 "{\"action\":\"register\",\"device_name\":\"Android Phone\"}");
+            
+            android.util.Log.d("PhoneProxy", "Ответ регистрации: " + response);
             
             if (response.contains("\"token\"")) {
                 // Простой парсинг токена
@@ -105,11 +110,13 @@ public class PhoneProxy extends Activity {
                     });
                     
                     // Запуск цикла получения заданий
-                    getTasksLoop();
+                    startTaskPolling();
                 }
             }
         } catch (Exception e) {
             final String error = e.getMessage();
+            android.util.Log.e("PhoneProxy", "Ошибка регистрации: " + error, e);
+            
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -119,8 +126,44 @@ public class PhoneProxy extends Activity {
         }
     }
     
+    // ЦИКЛ ПОЛУЧЕНИЯ ЗАДАНИЙ (каждые 5 секунд)
+    private void startTaskPolling() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (isRunning && token != null) {
+                    try {
+                        android.util.Log.d("PhoneProxy", "Запрашиваю задания...");
+                        
+                        String response = makeRequest(SERVER_URL, 
+                            "{\"action\":\"get_tasks\",\"token\":\"" + token + "\"}");
+                        
+                        android.util.Log.d("PhoneProxy", "Ответ заданий: " + response);
+                        
+                        if (response.contains("\"tasks\"") && !response.contains("[]")) {
+                            executeTasks(response);
+                        }
+                        
+                        Thread.sleep(5000); // 5 секунд
+                        
+                    } catch (InterruptedException e) {
+                        break;
+                    } catch (Exception e) {
+                        android.util.Log.e("PhoneProxy", "Ошибка получения заданий: " + e.getMessage(), e);
+                        
+                        try {
+                            Thread.sleep(5000);
+                        } catch (InterruptedException ie) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }).start();
+    }
+    
     private void executeTasks(String response) {
-        android.util.Log.d("PhoneProxy", "Получен ответ: " + response.substring(0, Math.min(200, response.length())));
+        android.util.Log.d("PhoneProxy", "Получен ответ заданий: " + response.substring(0, Math.min(200, response.length())));
         
         String[] parts = response.split("\\{\"id\":\"");
         android.util.Log.d("PhoneProxy", "Найдено заданий: " + (parts.length - 1));
@@ -145,27 +188,6 @@ public class PhoneProxy extends Activity {
         }
     }
     
-    private void executeTasks(String response) {
-        // Простой парсинг заданий
-        // В реальном проекте используй JSON библиотеку
-        String[] parts = response.split("\\{\"id\":\"");
-        
-        for (int i = 1; i < parts.length; i++) {
-            String part = parts[i];
-            
-            int idEnd = part.indexOf("\"");
-            String taskId = part.substring(0, idEnd);
-            
-            int urlStart = part.indexOf("\"url\":\"") + 7;
-            int urlEnd = part.indexOf("\"", urlStart);
-            
-            if (urlStart > 7 && urlEnd > urlStart) {
-                String url = part.substring(urlStart, urlEnd);
-                executeTask(taskId, url);
-            }
-        }
-    }
-    
     private void executeTask(final String taskId, final String url) {
         android.util.Log.d("PhoneProxy", "Начинаю выполнение: " + url);
         
@@ -178,7 +200,7 @@ public class PhoneProxy extends Activity {
         
         try {
             // Выполнение GET запроса
-            android.util.Log.d("PhoneProxy", "Открываю соединение...");
+            android.util.Log.d("PhoneProxy", "Открываю соединение к: " + url);
             
             URL requestUrl = new URL(url);
             HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
@@ -219,29 +241,39 @@ public class PhoneProxy extends Activity {
     
     private void sendResult(String taskId, int statusCode, String body) {
         try {
+            android.util.Log.d("PhoneProxy", "Отправляю результат...");
+            
             String escapedBody = body.replace("\\", "\\\\")
                                      .replace("\"", "\\\"")
                                      .replace("\n", "\\n")
                                      .replace("\r", "");
             
-            makeRequest(SERVER_URL, 
+            String response = makeRequest(SERVER_URL, 
                 "{\"action\":\"submit_result\",\"token\":\"" + token + 
                 "\",\"task_id\":\"" + taskId + 
                 "\",\"status_code\":" + statusCode + 
                 ",\"body\":\"" + escapedBody + "\"}");
+            
+            android.util.Log.d("PhoneProxy", "Результат отправлен: " + response);
+            
         } catch (Exception e) {
-            // Ошибка отправки
+            android.util.Log.e("PhoneProxy", "Ошибка отправки результата: " + e.getMessage(), e);
         }
     }
     
     private void sendError(String taskId, String error) {
         try {
-            makeRequest(SERVER_URL, 
+            android.util.Log.d("PhoneProxy", "Отправляю ошибку: " + error);
+            
+            String response = makeRequest(SERVER_URL, 
                 "{\"action\":\"submit_result\",\"token\":\"" + token + 
                 "\",\"task_id\":\"" + taskId + 
                 "\",\"error\":\"" + error + "\"}");
+            
+            android.util.Log.d("PhoneProxy", "Ошибка отправлена: " + response);
+            
         } catch (Exception e) {
-            // Ошибка отправки
+            android.util.Log.e("PhoneProxy", "Ошибка отправки ошибки: " + e.getMessage(), e);
         }
     }
     
