@@ -30,11 +30,31 @@ jobs:
         mkdir -p bin/phone-proxy-apk
         mkdir -p res/layout
         
-        # Полные пути к инструментам
-        AAPT_PATH="$ANDROID_HOME/build-tools/34.0.0/aapt"
-        D8_PATH="$ANDROID_HOME/build-tools/34.0.0/d8"
-        ZIPALIGN_PATH="$ANDROID_HOME/build-tools/34.0.0/zipalign"
-        PLATFORM_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
+        # НАХОДИМ ПРАВИЛЬНЫЕ ПУТИ АВТОМАТИЧЕСКИ
+        echo "ANDROID_HOME: $ANDROID_HOME"
+        echo "Build-tools versions:"
+        ls $ANDROID_HOME/build-tools/
+        
+        # Берём первую доступную версию build-tools
+        BT_VERSION=$(ls $ANDROID_HOME/build-tools/ | head -n1)
+        echo "Using build-tools version: $BT_VERSION"
+        
+        BT_PATH="$ANDROID_HOME/build-tools/$BT_VERSION"
+        AAPT_PATH="$BT_PATH/aapt"
+        D8_PATH="$BT_PATH/d8"
+        ZIPALIGN_PATH="$BT_PATH/zipalign"
+        
+        echo "AAPT_PATH: $AAPT_PATH"
+        echo "D8_PATH: $D8_PATH"
+        
+        # Проверяем существование файлов
+        ls -la $AAPT_PATH
+        ls -la $D8_PATH
+        
+        # Находим android.jar
+        PLATFORM_VERSION=$(ls $ANDROID_HOME/platforms/ | head -n1)
+        PLATFORM_JAR="$ANDROID_HOME/platforms/$PLATFORM_VERSION/android.jar"
+        echo "PLATFORM_JAR: $PLATFORM_JAR"
         
         # Компиляция ресурсов
         $AAPT_PATH package -f -m -J gen -M AndroidManifest.xml -S res -I $PLATFORM_JAR
@@ -43,7 +63,9 @@ jobs:
         javac -classpath $PLATFORM_JAR -d obj gen/com/phoneproxy/R.java src/com/phoneproxy/PhoneProxy.java
         
         # Создание DEX
-        $d8 --output bin/classes.dex obj/com/phoneproxy/PhoneProxy*.class
+        cd obj
+        $D8_PATH com/phoneproxy/*.class --output ../bin/classes.dex
+        cd ..
         
         # Упаковка APK
         $AAPT_PATH package -f -M AndroidManifest.xml -S res -I $PLATFORM_JAR -F bin/unsigned.apk
