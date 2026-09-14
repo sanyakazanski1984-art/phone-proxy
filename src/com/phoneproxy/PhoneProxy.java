@@ -74,12 +74,25 @@ public class PhoneProxy extends Activity {
         startButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                // ИСПРАВЛЕНО: ВСЕГДА запускаем сервис через startForegroundService,
+                // а не только startProxy() на привязанном экземпляре.
+                //
+                // Раньше, если bind уже прошёл, вызывался только proxyService.startProxy().
+                // Сервис оставался "bound-only" (не started), и при onStop -> unbindService
+                // Android его уничтожал. После повторного открытия приложения сервис
+                // создавался заново с пустыми isRunning/token/logBuilder.
+                //
+                // Теперь сервис становится started foreground service -> переживает unbind.
+                startProxyService();
+                
+                // Если уже привязаны, дёрнем startProxy() для мгновенного отклика UI.
+                // Guard "if (isRunning) return;" в ProxyService.startProxy() не даст
+                // запустить второй цикл опроса, когда чуть позже придёт onStartCommand.
                 if (proxyService != null) {
                     proxyService.startProxy();
-                    updateUI();
-                } else {
-                    startProxyService();
                 }
+                
+                updateUI();
             }
         });
         
@@ -108,12 +121,6 @@ public class PhoneProxy extends Activity {
                 shareLog();
             }
         });
-        
-        // ИСПРАВЛЕНО: bindToService() отсюда убран.
-        // Привязка теперь происходит строго в onStart(), а отвязка — в onStop().
-        // Раньше bind вызывался и здесь, и в onStart(), а unbind — только один раз
-        // в onStop(). Это приводило к утечке ServiceConnection
-        // ("ServiceConnection leaked ... Are you missing a call to unbindService()?").
     }
     
     @Override
@@ -133,7 +140,7 @@ public class PhoneProxy extends Activity {
     
     private void bindToService() {
         // Защита от повторной привязки — на случай, если onStart вызовется
-        // дважды без парного onStop (бывает при некоторых переходах).
+        // дважды без парного onStop.
         if (isServiceBound) return;
         
         Intent intent = new Intent(this, ProxyService.class);
@@ -149,11 +156,7 @@ public class PhoneProxy extends Activity {
             startService(serviceIntent);
         }
         
-        // ИСПРАВЛЕНО: bindToService() отсюда убран.
-        // Мы уже привязаны в onStart() (Activity на экране => onStart уже прошёл).
-        // Повторный bind здесь приводил к тому, что на один unbind в onStop()
-        // приходилось два bind — снова утечка ServiceConnection.
-        // Сервис сам подхватит запуск через onStartCommand -> startProxy().
+        // bindToService() здесь НЕ вызываем — привязка идёт в onStart().
     }
     
     // Обновление UI из Service
