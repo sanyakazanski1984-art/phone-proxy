@@ -21,6 +21,7 @@ import java.util.HashMap;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+
 public class ProxyService extends Service {
     
     private static final String CHANNEL_ID = "phone_proxy_channel";
@@ -304,18 +305,25 @@ public class ProxyService extends Service {
                 String body = task.optString("body", null);
                 
                 // Парсим заголовки
-                Map<String, String> headers = new HashMap<>();
-                if (task.has("headers") && !task.isNull("headers")) {
-                    JSONObject headersJson = task.getJSONObject("headers");
-                    JSONArray keys = headersJson.names();
-                    if (keys != null) {
-                        for (int j = 0; j < keys.length(); j++) {
-                            String key = keys.getString(j);
-                            String value = headersJson.getString(key);
-                            headers.put(key, value);
+               
+                    Map<String, String> headers = new HashMap<>();
+                    if (task.has("headers") && !task.isNull("headers")) {
+                        // ИСПРАВЛЕНО: headers может прийти как JSONArray ([]),
+                        // если в БД headers = NULL. getJSONObject() в этом случае
+                        // бросал исключение и весь пакет заданий терялся.
+                        Object headersRaw = task.opt("headers");
+                        if (headersRaw instanceof JSONObject) {
+                            JSONObject headersJson = (JSONObject) headersRaw;
+                            JSONArray keys = headersJson.names();
+                            if (keys != null) {
+                                for (int j = 0; j < keys.length(); j++) {
+                                    String key = keys.getString(j);
+                                    String value = headersJson.getString(key);
+                                    headers.put(key, value);
+                                }
+                            }
                         }
                     }
-                }
                 
                 if (url != null && taskId != null) {
                     url = url.replace("\\/", "/");
@@ -391,23 +399,23 @@ public class ProxyService extends Service {
     
     // ===== ОТПРАВКА РЕЗУЛЬТАТОВ =====
     
-    private void sendResult(String taskId, int statusCode, String body) {
+        private void sendResult(String taskId, int statusCode, String body) {
         try {
-            String escapedBody = body.replace("\\", "\\\\")
-                                     .replace("\"", "\\\"")
-                                     .replace("\n", "\\n")
-                                     .replace("\r", "")
-                                     .replace("\t", "\\t");
-            
-            if (escapedBody.length() > 50000) {
-                escapedBody = escapedBody.substring(0, 50000) + "...[обрезано]";
+            // Обрезаем тело ответа, чтобы не перегружать сервер и БД
+            String trimmedBody = body;
+            if (trimmedBody.length() > 50000) {
+                trimmedBody = trimmedBody.substring(0, 50000) + "...[обрезано]";
             }
             
-            String response = makeRequest(SERVER_URL, 
-                "{\"action\":\"submit_result\",\"token\":\"" + token + 
-                "\",\"task_id\":\"" + taskId + 
-                "\",\"status_code\":" + statusCode + 
-                ",\"body\":\"" + escapedBody + "\"}");
+            // Используем JSONObject для безопасного экранирования кавычек и спецсимволов
+            JSONObject json = new JSONObject();
+            json.put("action", "submit_result");
+            json.put("token", token);
+            json.put("task_id", taskId);
+            json.put("status_code", statusCode);
+            json.put("body", trimmedBody);
+            
+            String response = makeRequest(SERVER_URL, json.toString());
             
             if (response.contains("\"success\":true")) {
                 addLog("✅ Результат доставлен");
