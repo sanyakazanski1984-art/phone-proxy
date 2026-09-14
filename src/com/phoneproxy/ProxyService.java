@@ -7,7 +7,6 @@ import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
-import androidx.core.app.NotificationCompat;
 
 public class ProxyService extends Service {
     
@@ -22,13 +21,8 @@ public class ProxyService extends Service {
     
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Запуск как foreground service
         startForeground(NOTIFICATION_ID, createNotification());
-        
-        // Здесь запускаем основной цикл прокси
-        // (код из PhoneProxy.java)
-        
-        return START_STICKY; // Перезапуск при убийстве
+        return START_STICKY;
     }
     
     @Override
@@ -40,10 +34,10 @@ public class ProxyService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "Phone Proxy Service",
+                "Phone Proxy",
                 NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Прокси сервис работает в фоне");
+            channel.setDescription("Прокси работает в фоне");
             
             NotificationManager manager = getSystemService(NotificationManager.class);
             manager.createNotificationChannel(channel);
@@ -51,11 +45,19 @@ public class ProxyService extends Service {
     }
     
     private Notification createNotification() {
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
+        Notification.Builder builder;
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new Notification.Builder(this, CHANNEL_ID);
+        } else {
+            builder = new Notification.Builder(this);
+        }
+        
+        return builder
             .setContentTitle("Phone Proxy")
             .setContentText("Прокси работает")
             .setSmallIcon(android.R.drawable.ic_menu_manage)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(Notification.PRIORITY_LOW)
             .build();
     }
 }
