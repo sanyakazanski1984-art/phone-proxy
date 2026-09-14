@@ -63,7 +63,7 @@ jobs:
         zipalign 4 bin/unsigned.apk bin/phone-proxy.apk
     
     - name: Upload APK
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4    ← ИСПРАВЛЕНО!
       with:
         name: phone-proxy-apk
-        path: bin/phone-proxy.apk
+        path: bin/phone-proxy-apk/phone-proxy.apk
