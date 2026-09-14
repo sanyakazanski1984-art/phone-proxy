@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import android.os.StrictMode;
 
 public class PhoneProxy extends Activity {
     
@@ -27,6 +28,8 @@ public class PhoneProxy extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
+        StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
+        StrictMode.setThreadPolicy(policy);
         
         statusText = (TextView) findViewById(R.id.statusText);
         startButton = (Button) findViewById(R.id.startButton);
