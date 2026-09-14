@@ -42,7 +42,9 @@ public class ProxyService extends Service {
     private final LocalBinder binder = new LocalBinder();
     
     public class LocalBinder extends Binder {
-        ProxyService getService() {
+        // ИСПРАВЛЕНО: добавлен public, чтобы getService() был доступен
+        // из Activity, даже если она окажется в другом пакете
+        public ProxyService getService() {
             return ProxyService.this;
         }
     }
@@ -76,6 +78,13 @@ public class ProxyService extends Service {
     // ===== ЗАПУСК/ОСТАНОВКА =====
     
     public void startProxy() {
+        // ИСПРАВЛЕНО: защита от повторного запуска.
+        // Без этой проверки двойной тап по кнопке (или повторный
+        // onStartCommand) запускал бы второй register-thread и,
+        // как следствие, второй цикл startTaskPolling() — каждая
+        // задача выполнялась бы дважды.
+        if (isRunning) return;
+        
         isRunning = true;
         addLog("▶ ЗАПУСК ПРОКСИ");
         
