@@ -43,7 +43,7 @@ jobs:
         javac -classpath $PLATFORM_JAR -d obj gen/com/phoneproxy/R.java src/com/phoneproxy/PhoneProxy.java
         
         # Создание DEX
-        $D8_PATH --output=bin/classes.dex obj/com/phoneproxy/*.class
+        $d8 obj/com/phoneproxy/*.class --output bin/classes.dex
         
         # Упаковка APK
         $AAPT_PATH package -f -M AndroidManifest.xml -S res -I $PLATFORM_JAR -F bin/unsigned.apk
