@@ -114,27 +114,33 @@ public class ProxyService extends Service {
         try {
             addLog("📡 Регистрация на сервере...");
 
-          // Получаем API ключ если есть
-                String apiKey = getApiKey();
-
-                // ИСПРАВЛЕНО: вместо хардкодного "Android Phone" — уникальное имя устройства.
-                // Иначе все телефоны одного партнёра схлопывались в одну строку proxy_devices.
-                String deviceName = getOrCreateDeviceName();
-
-                // Формируем JSON с API ключом
-                String jsonBody;
-                if (apiKey != null && !apiKey.isEmpty()) {
-                    jsonBody = "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\",\"api_key\":\"" + apiKey + "\"}";
-                } else {
-                    jsonBody = "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\"}";
-                }
-            
-            String response = makeRequest(SERVER_URL, jsonBody);
-            
+            // ИСПРАВЛЕНО: startTime теперь ЗАМЕРЯЕТСЯ ДО запроса.
+            // Раньше он стоял после первого makeRequest, из-за чего
+            // elapsed всегда получался около нуля.
             long startTime = System.currentTimeMillis();
-            
-            String response = makeRequest(SERVER_URL, 
-                "{\"action\":\"register\",\"device_name\":\"Android Phone\"}");
+
+            // Получаем API ключ если есть
+            String apiKey = getApiKey();
+
+            // ИСПРАВЛЕНО: вместо хардкодного "Android Phone" — уникальное имя устройства.
+            // Иначе все телефоны одного партнёра схлопывались в одну строку proxy_devices.
+            String deviceName = getOrCreateDeviceName();
+
+            // Формируем JSON с API ключом
+            String jsonBody;
+            if (apiKey != null && !apiKey.isEmpty()) {
+                jsonBody = "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\",\"api_key\":\"" + apiKey + "\"}";
+            } else {
+                jsonBody = "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\"}";
+            }
+
+            // ИСПРАВЛЕНО: убрано второе объявление "String response".
+            // Раньше здесь было два подряд:
+            //     String response = makeRequest(SERVER_URL, jsonBody);
+            //     ...
+            //     String response = makeRequest(SERVER_URL, "...Android Phone...");
+            // Это давало ошибку компиляции "variable response is already defined".
+            String response = makeRequest(SERVER_URL, jsonBody);
             
             long elapsed = System.currentTimeMillis() - startTime;
             
@@ -171,7 +177,7 @@ public class ProxyService extends Service {
         }
     }
 
-        // Получить API ключ из настроек
+    // Получить API ключ из настроек
     private String getApiKey() {
         android.content.SharedPreferences prefs = 
             getSharedPreferences("PhoneProxyPrefs", MODE_PRIVATE);
@@ -179,41 +185,41 @@ public class ProxyService extends Service {
     }
 
     // ИСПРАВЛЕНО: имя устройства для отправки на сервер.
-// Если PhoneProxy уже создал его — читаем оттуда.
-// Если нет (например, сервис поднялся первым) — создаём сами.
-private String getOrCreateDeviceName() {
-    android.content.SharedPreferences prefs = 
-        getSharedPreferences("PhoneProxyPrefs", MODE_PRIVATE);
-    
-    String deviceName = prefs.getString("device_name", null);
-    if (deviceName != null && !deviceName.isEmpty()) {
+    // Если PhoneProxy уже создал его — читаем оттуда.
+    // Если нет (например, сервис поднялся первым) — создаём сами.
+    private String getOrCreateDeviceName() {
+        android.content.SharedPreferences prefs = 
+            getSharedPreferences("PhoneProxyPrefs", MODE_PRIVATE);
+        
+        String deviceName = prefs.getString("device_name", null);
+        if (deviceName != null && !deviceName.isEmpty()) {
+            return deviceName;
+        }
+        
+        String androidId = null;
+        try {
+            androidId = android.provider.Settings.Secure.getString(
+                getContentResolver(),
+                android.provider.Settings.Secure.ANDROID_ID
+            );
+        } catch (Exception e) {
+            // ignore
+        }
+        
+        boolean isBad = (androidId == null || androidId.isEmpty() 
+                         || "9774d56d682e549c".equals(androidId)
+                         || "unknown".equalsIgnoreCase(androidId));
+        
+        if (isBad) {
+            androidId = java.util.UUID.randomUUID().toString().replace("-", "");
+        }
+        
+        String shortId = androidId.substring(0, Math.min(8, androidId.length()));
+        deviceName = "Android_" + shortId;
+        
+        prefs.edit().putString("device_name", deviceName).apply();
         return deviceName;
     }
-    
-    String androidId = null;
-    try {
-        androidId = android.provider.Settings.Secure.getString(
-            getContentResolver(),
-            android.provider.Settings.Secure.ANDROID_ID
-        );
-    } catch (Exception e) {
-        // ignore
-    }
-    
-    boolean isBad = (androidId == null || androidId.isEmpty() 
-                     || "9774d56d682e549c".equals(androidId)
-                     || "unknown".equalsIgnoreCase(androidId));
-    
-    if (isBad) {
-        androidId = java.util.UUID.randomUUID().toString().replace("-", "");
-    }
-    
-    String shortId = androidId.substring(0, Math.min(8, androidId.length()));
-    deviceName = "Android_" + shortId;
-    
-    prefs.edit().putString("device_name", deviceName).apply();
-    return deviceName;
-}
     
     // ===== ЦИКЛ ЗАДАНИЙ =====
     
@@ -282,7 +288,7 @@ private String getOrCreateDeviceName() {
     
     // ===== ВЫПОЛНЕНИЕ ЗАДАНИЙ =====
     
-        private void executeTasks(String response) {
+    private void executeTasks(String response) {
         try {
             JSONObject jsonResponse = new JSONObject(response);
             JSONArray tasks = jsonResponse.getJSONArray("tasks");
