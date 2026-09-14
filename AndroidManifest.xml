@@ -2,14 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.phoneproxy">
 
+    <!-- Сетевые разрешения -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    
+    <!-- Для фоновой работы Android 10+ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
+    <!-- Для запуска при загрузке -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
-        android:label="Phone Proxy v2"
+        android:label="Phone Proxy v3"
         android:icon="@android:drawable/ic_menu_manage"
-        android:allowBackup="true">
+        android:allowBackup="true"
+        android:usesCleartextTraffic="true">
         
         <activity
             android:name=".PhoneProxy"
@@ -20,5 +28,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <!-- Фоновый сервис для Android 10+ -->
+        <service
+            android:name=".ProxyService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+            
+        <!-- Автозапуск при загрузке -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        
     </application>
 </manifest>
