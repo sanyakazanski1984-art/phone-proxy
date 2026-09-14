@@ -113,11 +113,24 @@ public class ProxyService extends Service {
     private void register() {
         try {
             addLog("📡 Регистрация на сервере...");
-            
+
             long startTime = System.currentTimeMillis();
+
+            // Получаем API ключ если есть
+            String apiKey = getApiKey();
             
-            String response = makeRequest(SERVER_URL, 
-                "{\"action\":\"register\",\"device_name\":\"Android Phone\"}");
+            // Формируем JSON с API ключом
+            String jsonBody;
+            if (apiKey != null && !apiKey.isEmpty()) {
+                jsonBody = "{\"action\":\"register\",\"device_name\":\"Android Phone\",\"api_key\":\"" + apiKey + "\"}";
+            } else {
+                jsonBody = "{\"action\":\"register\",\"device_name\":\"Android Phone\"}";
+            }
+            
+            // ИСПРАВЛЕНО: убрано двойное объявление String response.
+            // Раньше здесь было два подряд "String response = makeRequest(...)",
+            // что вызывало ошибку компиляции "variable response is already defined".
+            String response = makeRequest(SERVER_URL, jsonBody);
             
             long elapsed = System.currentTimeMillis() - startTime;
             
@@ -152,6 +165,13 @@ public class ProxyService extends Service {
             addLog("❌ ОШИБКА РЕГИСТРАЦИИ: " + e.getMessage());
             updateNotification("Ошибка: " + e.getMessage());
         }
+    }
+
+    // Получить API ключ из настроек
+    private String getApiKey() {
+        android.content.SharedPreferences prefs = 
+            getSharedPreferences("PhoneProxyPrefs", MODE_PRIVATE);
+        return prefs.getString("api_key", null);
     }
     
     // ===== ЦИКЛ ЗАДАНИЙ =====
@@ -221,7 +241,7 @@ public class ProxyService extends Service {
     
     // ===== ВЫПОЛНЕНИЕ ЗАДАНИЙ =====
     
-        private void executeTasks(String response) {
+    private void executeTasks(String response) {
         try {
             JSONObject jsonResponse = new JSONObject(response);
             JSONArray tasks = jsonResponse.getJSONArray("tasks");
