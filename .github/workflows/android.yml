@@ -30,21 +30,32 @@ jobs:
         mkdir -p bin/phone-proxy-apk
         mkdir -p res/layout
         
-        aapt package -f -m -J gen -M AndroidManifest.xml -S res -I $ANDROID_HOME/platforms/android-34/android.jar
+        # Полные пути к инструментам
+        AAPT_PATH="$ANDROID_HOME/build-tools/34.0.0/aapt"
+        D8_PATH="$ANDROID_HOME/build-tools/34.0.0/d8"
+        ZIPALIGN_PATH="$ANDROID_HOME/build-tools/34.0.0/zipalign"
+        PLATFORM_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
         
-        javac -classpath $ANDROID_HOME/platforms/android-34/android.jar -d obj gen/com/phoneproxy/R.java src/com/phoneproxy/PhoneProxy.java
+        # Компиляция ресурсов
+        $AAPT_PATH package -f -m -J gen -M AndroidManifest.xml -S res -I $PLATFORM_JAR
         
-        d8 --output=bin/classes.dex obj/com/phoneproxy/*.class
+        # Компиляция Java
+        javac -classpath $PLATFORM_JAR -d obj gen/com/phoneproxy/R.java src/com/phoneproxy/PhoneProxy.java
         
-        aapt package -f -M AndroidManifest.xml -S res -I $ANDROID_HOME/platforms/android-34/android.jar -F bin/unsigned.apk
+        # Создание DEX
+        $D8_PATH --output=bin/classes.dex obj/com/phoneproxy/*.class
+        
+        # Упаковка APK
+        $AAPT_PATH package -f -M AndroidManifest.xml -S res -I $PLATFORM_JAR -F bin/unsigned.apk
         
         cd bin
         zip -j unsigned.apk classes.dex
         cd ..
         
+        # Подпись (debug)
         keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 -keystore debug.keystore -storepass android -keypass android bin/unsigned.apk androiddebugkey
-        zipalign 4 bin/unsigned.apk bin/phone-proxy-apk/phone-proxy.apk
+        $ZIPALIGN_PATH 4 bin/unsigned.apk bin/phone-proxy-apk/phone-proxy.apk
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
