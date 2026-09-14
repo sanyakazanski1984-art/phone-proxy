@@ -219,58 +219,46 @@ public class ProxyService extends Service {
     
     // ===== ВЫПОЛНЕНИЕ ЗАДАНИЙ =====
     
-    private void executeTasks(String response) {
+        private void executeTasks(String response) {
         try {
-            String[] parts = response.split("\\{\"id\":\"");
+            JSONObject jsonResponse = new JSONObject(response);
+            JSONArray tasks = jsonResponse.getJSONArray("tasks");
             
-            for (int i = 1; i < parts.length; i++) {
+            for (int i = 0; i < tasks.length(); i++) {
                 if (!isRunning) break;
                 
-                String part = parts[i];
+                JSONObject task = tasks.getJSONObject(i);
                 
-                // Парсинг ID
-                String taskId = null;
-                int idEnd = part.indexOf("\"");
-                if (idEnd > 0) {
-                    taskId = part.substring(0, idEnd);
-                }
+                String taskId = task.getString("id");
+                String url = task.getString("url");
+                String method = task.optString("method", "GET");
+                String body = task.optString("body", null);
                 
-                // Альтернативный парсинг
-                if (taskId == null || taskId.equals("null")) {
-                    int taskIdStart = part.indexOf("\"id\":");
-                    if (taskIdStart >= 0) {
-                        taskIdStart += 5;
-                        int taskIdEnd = part.indexOf(",", taskIdStart);
-                        if (taskIdEnd > taskIdStart) {
-                            taskId = part.substring(taskIdStart, taskIdEnd)
-                                        .replace("\"", "").trim();
+                // Парсим заголовки
+                Map<String, String> headers = new HashMap<>();
+                if (task.has("headers") && !task.isNull("headers")) {
+                    JSONObject headersJson = task.getJSONObject("headers");
+                    JSONArray keys = headersJson.names();
+                    if (keys != null) {
+                        for (int j = 0; j < keys.length(); j++) {
+                            String key = keys.getString(j);
+                            String value = headersJson.getString(key);
+                            headers.put(key, value);
                         }
                     }
                 }
                 
-                // Парсинг URL и метода
-                String url = extractJsonField(part, "url");
-                String method = extractJsonField(part, "method");
-                
                 if (url != null && taskId != null) {
-                    url = url.replace("\\/", "/")
-                             .replace("\\\"", "\"");
-                    
-                    if (method == null || method.isEmpty()) {
-                        method = "GET";
-                    }
-                    
-                    addLog("📤 Задание [" + i + "]: ID=" + taskId);
+                    url = url.replace("\\/", "/");
+                    addLog("📤 Задание [" + (i+1) + "]: ID=" + taskId);
                     addLog("   URL: " + url);
                     
-                    executeTask(taskId, url, method, null, null);
-                } else {
-                    addLog("❌ Ошибка парсинга задания " + i);
+                    executeTask(taskId, url, method, headers, body);
                 }
             }
             
         } catch (Exception e) {
-            addLog("❌ ОШИБКА парсинга: " + e.getMessage());
+            addLog("❌ ОШИБКА парсинга JSON: " + e.getMessage());
         }
     }
     
@@ -281,20 +269,18 @@ public class ProxyService extends Service {
         updateNotification("Выполняю: " + truncate(url, 30));
         
         try {
-            addLog("🌐 Начинаю: " + method + " " + url);
-            
-            long startTime = System.currentTimeMillis();
-            
             URL requestUrl = new URL(url);
             HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
             conn.setRequestMethod(method);
             
+            // ПРИМЕНЯЕМ ЗАГОЛОВКИ СЕРВЕРА
             if (headers != null && !headers.isEmpty()) {
                 for (Map.Entry<String, String> entry : headers.entrySet()) {
                     conn.setRequestProperty(entry.getKey(), entry.getValue());
                 }
             }
             
+            // ОТПРАВЛЯЕМ ТЕЛО ЗАПРОСА
             if (body != null && !body.isEmpty() && 
                 (method.equals("POST") || method.equals("PUT"))) {
                 conn.setDoOutput(true);
@@ -307,9 +293,6 @@ public class ProxyService extends Service {
             conn.setReadTimeout(READ_TIMEOUT);
             
             int responseCode = conn.getResponseCode();
-            long elapsed = System.currentTimeMillis() - startTime;
-            
-            addLog("📊 Код: " + responseCode + " (" + elapsed + "мс)");
             
             BufferedReader reader;
             if (responseCode >= 400) {
@@ -325,10 +308,7 @@ public class ProxyService extends Service {
             }
             reader.close();
             
-            addLog("📄 Ответ: " + responseBody.length() + " символов");
-            
             sendResult(taskId, responseCode, responseBody.toString());
-            
             completedTasks++;
             
         } catch (Exception e) {
