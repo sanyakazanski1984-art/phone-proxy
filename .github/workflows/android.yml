@@ -1,0 +1,69 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v2
+    
+    - name: Build APK
+      run: |
+        mkdir -p gen/com/phoneproxy
+        mkdir -p obj/com/phoneproxy
+        mkdir -p bin
+        mkdir -p res/layout
+        
+        # Компиляция ресурсов
+        aapt package -f -m \
+          -J gen \
+          -M AndroidManifest.xml \
+          -S res \
+          -I $ANDROID_HOME/platforms/android-34/android.jar
+        
+        # Компиляция Java
+        javac -classpath $ANDROID_HOME/platforms/android-34/android.jar \
+          -d obj \
+          gen/com/phoneproxy/R.java \
+          src/com/phoneproxy/PhoneProxy.java
+        
+        # Создание DEX
+        dx --dex --output=bin/classes.dex \
+          obj/com/phoneproxy/*.class
+        
+        # Упаковка APK
+        aapt package -f \
+          -M AndroidManifest.xml \
+          -S res \
+          -I $ANDROID_HOME/platforms/android-34/android.jar \
+          -F bin/unsigned.apk
+        
+        cd bin
+        zip -j unsigned.apk classes.dex
+        cd ..
+        
+        # Подпись (debug)
+        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 -keystore debug.keystore -storepass android -keypass android bin/unsigned.apk androiddebugkey
+        zipalign 4 bin/unsigned.apk bin/phone-proxy.apk
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: phone-proxy-apk
+        path: bin/phone-proxy.apk
