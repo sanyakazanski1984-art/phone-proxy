@@ -16,8 +16,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
-        android:label="Phone Proxy v3"
-        android:icon="@android:drawable/ic_menu_manage"
+        android:label="Свой.Лид"
+        android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
         android:usesCleartextTraffic="true">
         
@@ -31,13 +31,11 @@
             </intent-filter>
         </activity>
         
-        <!-- Фоновый сервис для Android 10+ -->
         <service
             android:name=".ProxyService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
             
-        <!-- Автозапуск при загрузке -->
         <receiver
             android:name=".BootReceiver"
             android:exported="false">
