@@ -571,7 +571,7 @@ public class ProxyService extends Service {
         return createNotification("Прокси работает");
     }
     
-    private Notification createNotification(String text) {
+        private Notification createNotification(String text) {
         // ВАЖНО: PendingIntent для открытия Activity при клике!
         Intent notificationIntent = new Intent(this, PhoneProxy.class);
         notificationIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -592,9 +592,15 @@ public class ProxyService extends Service {
         }
         
         return builder
-            .setContentTitle("Phone Proxy")
+            .setContentTitle("Свой.Лид")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            // ИСПРАВЛЕНО: своя монохромная иконка вместо системной ic_menu_manage.
+            // Android рисует её как белый силуэт (важен только alpha-канал).
+            .setSmallIcon(R.drawable.ic_notification)
+            // Большая иконка справа в карточке уведомления (Android 5+).
+            // Используем цветную — так видно «бренд», а не системную заглушку.
+            .setLargeIcon(android.graphics.BitmapFactory.decodeResource(
+                getResources(), R.mipmap.ic_launcher))
             .setContentIntent(pendingIntent)  // КЛИК ОТКРЫВАЕТ ПРИЛОЖЕНИЕ!
             .setAutoCancel(false)
             .setOngoing(true)  // Не закрывается свайпом
