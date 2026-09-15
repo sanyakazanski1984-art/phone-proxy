@@ -399,12 +399,12 @@ public class ProxyService extends Service {
     
     // ===== ОТПРАВКА РЕЗУЛЬТАТОВ =====
     
-        private void sendResult(String taskId, int statusCode, String body) {
+          private void sendResult(String taskId, int statusCode, String body) {
         try {
             // Обрезаем тело ответа, чтобы не перегружать сервер и БД
             String trimmedBody = body;
-            if (trimmedBody.length() > 50000) {
-                trimmedBody = trimmedBody.substring(0, 50000) + "...[обрезано]";
+            if (trimmedBody.length() > 500000) { // БЫЛО 50000
+                trimmedBody = trimmedBody.substring(0, 500000) + "...[обрезано]";
             }
             
             // Используем JSONObject для безопасного экранирования кавычек и спецсимволов
