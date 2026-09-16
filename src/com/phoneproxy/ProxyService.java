@@ -286,6 +286,21 @@ public class ProxyService extends Service {
             }
         }).start();
     }
+
+// ИСПРАВЛЕНО: в логи и уведомление больше не попадает реальный URL
+// VK-метода (api.vk.com/method/wall.get и т.п.). Показываем понятную фразу.
+private String describeTask(String url) {
+    if (url == null || url.isEmpty()) return "Запрос";
+    if (url.contains("/wall.get"))            return "Чтение постов";
+    if (url.contains("/wall.createComment"))  return "Отправка комментария";
+    if (url.contains("/likes.add"))           return "Постановка лайка";
+    if (url.contains("/friends.add"))         return "Заявка в друзья";
+    if (url.contains("/messages.send"))       return "Отправка сообщения";
+    if (url.contains("/messages.setActivity"))return "Печатает...";
+    if (url.contains("/users.get"))           return "Получение профиля";
+    return "Запрос";
+}
+
     
     // ===== ВЫПОЛНЕНИЕ ЗАДАНИЙ =====
     
@@ -327,8 +342,8 @@ public class ProxyService extends Service {
                 
                 if (url != null && taskId != null) {
                     url = url.replace("\\/", "/");
-                    addLog("📤 Задание [" + (i+1) + "]: ID=" + taskId);
-                    addLog("   URL: " + url);
+                    // ИСПРАВЛЕНО: не показываем реальный URL VK, только человекочитаемое действие
+                    addLog("📤 Задание [" + (i+1) + "]: " + describeTask(url));
                     
                     executeTask(taskId, url, method, headers, body);
                 }
@@ -343,7 +358,8 @@ public class ProxyService extends Service {
                              Map<String, String> headers, String body) {
         totalTasks++;
         
-        updateNotification("Выполняю: " + truncate(url, 30));
+        // ИСПРАВЛЕНО: в уведомлении тоже не URL, а описание действия
+            updateNotification("Выполняю: " + describeTask(url));
         
         try {
             URL requestUrl = new URL(url);
