@@ -48,7 +48,13 @@
             android:text="⏹ Стоп"
             android:textSize="14sp"
             android:enabled="false" />
-
+        <Button
+            android:id="@+id/changeKeyButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Сменить ключ"
+            android:layout_marginTop="8dp" />
+        
     </LinearLayout>
 
     <!-- Кнопки логов -->
