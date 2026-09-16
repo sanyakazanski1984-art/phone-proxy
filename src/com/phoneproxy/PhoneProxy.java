@@ -90,7 +90,6 @@ public class PhoneProxy extends Activity {
         startButton = (Button) findViewById(R.id.startButton);
         stopButton = (Button) findViewById(R.id.stopButton);
         Button clearLogButton = (Button) findViewById(R.id.clearLogButton);
-        Button shareLogButton = (Button) findViewById(R.id.shareLogButton);
         Button changeKeyButton = (Button) findViewById(R.id.changeKeyButton);
 
         // === ПРОВЕРКА API КЛЮЧА ===
@@ -139,12 +138,7 @@ public class PhoneProxy extends Activity {
             }
         });
         
-        shareLogButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                shareLog();
-            }
-        });
+
     }
     
     @Override
