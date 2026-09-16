@@ -91,6 +91,7 @@ public class PhoneProxy extends Activity {
         stopButton = (Button) findViewById(R.id.stopButton);
         Button clearLogButton = (Button) findViewById(R.id.clearLogButton);
         Button shareLogButton = (Button) findViewById(R.id.shareLogButton);
+        Button changeKeyButton = (Button) findViewById(R.id.changeKeyButton);
 
         // === ПРОВЕРКА API КЛЮЧА ===
         checkApiKey();
@@ -121,6 +122,13 @@ public class PhoneProxy extends Activity {
                 }
             }
         });
+
+        changeKeyButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    confirmChangeKey();
+                }
+                });
         
         clearLogButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -237,6 +245,40 @@ public class PhoneProxy extends Activity {
                    prefs.getInt(KEY_PARTNER_ID, 0) + ")");
         }
     }
+
+    private void confirmChangeKey() {
+    new android.app.AlertDialog.Builder(this)
+        .setTitle("Сменить ключ?")
+        .setMessage("Текущая привязка будет удалена. Понадобится ввести новый API ключ.")
+        .setPositiveButton("Сменить", new android.content.DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(android.content.DialogInterface dialog, int which) {
+                changeApiKey();
+            }
+        })
+        .setNegativeButton("Отмена", null)
+        .show();
+}
+
+private void changeApiKey() {
+    // 1. Останавливаем сервис, если работает
+    if (proxyService != null && proxyService.isRunning) {
+        proxyService.stopProxy();
+    }
+    
+    // 2. Чистим сохранённый ключ и partner_id.
+    // device_name НЕ трогаем — он привязан к железу и останется тем же.
+    android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+    prefs.edit()
+        .remove(KEY_API_KEY)
+        .remove(KEY_PARTNER_ID)
+        .apply();
+    
+    addLog("🔑 Ключ сброшен, введите новый");
+    
+    // 3. Показываем диалог ввода
+    showApiKeyDialog();
+}
     
     private void showApiKeyDialog() {
         // Создаём layout программно
