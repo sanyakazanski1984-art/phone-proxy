@@ -6,9 +6,12 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
+import android.provider.Settings;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -41,12 +44,13 @@ public class ProxyService extends Service {
     // ===== ЛОГ =====
     public StringBuilder logBuilder = new StringBuilder();
     
+    // ===== WakeLock — держим CPU активным, чтобы Android не усыпил сервис =====
+    private PowerManager.WakeLock wakeLock = null;
+    
     // Binder для связи с Activity
     private final LocalBinder binder = new LocalBinder();
     
     public class LocalBinder extends Binder {
-        // ИСПРАВЛЕНО: добавлен public, чтобы getService() был доступен
-        // из Activity, даже если она окажется в другом пакете
         public ProxyService getService() {
             return ProxyService.this;
         }
@@ -60,6 +64,28 @@ public class ProxyService extends Service {
         addLog("Phone Proxy Service создан");
         addLog("Сервер: " + SERVER_URL);
         addLog("=================================");
+        
+        // Разрешение работы без ограничений батареи (Android 6+)
+        requestIgnoreBatteryOptimizations();
+    }
+    
+    // ===== ЗАПРОС ОТКЛЮЧЕНИЯ BATTERY OPTIMIZATION =====
+    // ИСПРАВЛЕНО: раньше этот блок был в теле класса (вне метода) — это синтаксическая ошибка,
+    // класс не компилировался. Теперь это отдельный метод, вызывается из onCreate().
+    private void requestIgnoreBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null) return;
+            if (!pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                i.setData(Uri.parse("package:" + getPackageName()));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
+            }
+        } catch (Exception e) {
+            addLog("⚠️ Battery optimization запрос не удался: " + e.getMessage());
+        }
     }
     
     @Override
@@ -81,15 +107,14 @@ public class ProxyService extends Service {
     // ===== ЗАПУСК/ОСТАНОВКА =====
     
     public void startProxy() {
-        // ИСПРАВЛЕНО: защита от повторного запуска.
-        // Без этой проверки двойной тап по кнопке (или повторный
-        // onStartCommand) запускал бы второй register-thread и,
-        // как следствие, второй цикл startTaskPolling() — каждая
-        // задача выполнялась бы дважды.
+        // Защита от повторного запуска.
         if (isRunning) return;
         
         isRunning = true;
         addLog("▶ ЗАПУСК ПРОКСИ");
+        
+        // Держим CPU активным, пока идёт поллинг
+        acquireWakeLock();
         
         updateNotification("Подключение...");
         
@@ -106,7 +131,38 @@ public class ProxyService extends Service {
         token = null;
         addLog("⏹ ОСТАНОВКА ПРОКСИ");
         
+        releaseWakeLock();
+        
         updateNotification("Остановлено");
+    }
+    
+    // ===== WAKELOCK =====
+    // PARTIAL_WAKE_LOCK держит CPU активным при погашенном экране.
+    // Без него Android уводит сервис в Doze — задачи приходят пачкой раз в 15-120 минут.
+    private void acquireWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) return;
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null) return;
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PhoneProxy:PollLock");
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire();
+            addLog("🔒 WakeLock получен");
+        } catch (Exception e) {
+            addLog("⚠️ WakeLock не удался: " + e.getMessage());
+        }
+    }
+    
+    private void releaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+                addLog("🔓 WakeLock отпущен");
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        wakeLock = null;
     }
     
     // ===== РЕГИСТРАЦИЯ =====
@@ -115,19 +171,11 @@ public class ProxyService extends Service {
         try {
             addLog("📡 Регистрация на сервере...");
 
-            // ИСПРАВЛЕНО: startTime теперь ЗАМЕРЯЕТСЯ ДО запроса.
-            // Раньше он стоял после первого makeRequest, из-за чего
-            // elapsed всегда получался около нуля.
             long startTime = System.currentTimeMillis();
 
-            // Получаем API ключ если есть
             String apiKey = getApiKey();
-
-            // ИСПРАВЛЕНО: вместо хардкодного "Android Phone" — уникальное имя устройства.
-            // Иначе все телефоны одного партнёра схлопывались в одну строку proxy_devices.
             String deviceName = getOrCreateDeviceName();
 
-            // Формируем JSON с API ключом
             String jsonBody;
             if (apiKey != null && !apiKey.isEmpty()) {
                 jsonBody = "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\",\"api_key\":\"" + apiKey + "\"}";
@@ -135,12 +183,6 @@ public class ProxyService extends Service {
                 jsonBody = "{\"action\":\"register\",\"device_name\":\"" + deviceName + "\"}";
             }
 
-            // ИСПРАВЛЕНО: убрано второе объявление "String response".
-            // Раньше здесь было два подряд:
-            //     String response = makeRequest(SERVER_URL, jsonBody);
-            //     ...
-            //     String response = makeRequest(SERVER_URL, "...Android Phone...");
-            // Это давало ошибку компиляции "variable response is already defined".
             String response = makeRequest(SERVER_URL, jsonBody);
             
             long elapsed = System.currentTimeMillis() - startTime;
@@ -148,7 +190,6 @@ public class ProxyService extends Service {
             addLog("✅ Ответ за " + elapsed + "мс");
             
             if (response.contains("\"token\"")) {
-                // Убираем PHP warnings
                 if (response.contains("<br />")) {
                     int jsonStart = response.indexOf("{\"success\"");
                     if (jsonStart >= 0) {
@@ -178,16 +219,12 @@ public class ProxyService extends Service {
         }
     }
 
-    // Получить API ключ из настроек
     private String getApiKey() {
         android.content.SharedPreferences prefs = 
             getSharedPreferences("PhoneProxyPrefs", MODE_PRIVATE);
         return prefs.getString("api_key", null);
     }
 
-    // ИСПРАВЛЕНО: имя устройства для отправки на сервер.
-    // Если PhoneProxy уже создал его — читаем оттуда.
-    // Если нет (например, сервис поднялся первым) — создаём сами.
     private String getOrCreateDeviceName() {
         android.content.SharedPreferences prefs = 
             getSharedPreferences("PhoneProxyPrefs", MODE_PRIVATE);
@@ -199,9 +236,9 @@ public class ProxyService extends Service {
         
         String androidId = null;
         try {
-            androidId = android.provider.Settings.Secure.getString(
+            androidId = Settings.Secure.getString(
                 getContentResolver(),
-                android.provider.Settings.Secure.ANDROID_ID
+                Settings.Secure.ANDROID_ID
             );
         } catch (Exception e) {
             // ignore
@@ -241,7 +278,6 @@ public class ProxyService extends Service {
                         
                         long elapsed = System.currentTimeMillis() - startTime;
                         
-                        // Убираем PHP warnings
                         if (response.contains("<br />")) {
                             int jsonStart = response.indexOf("{\"success\"");
                             if (jsonStart >= 0) {
@@ -287,21 +323,19 @@ public class ProxyService extends Service {
         }).start();
     }
 
-// ИСПРАВЛЕНО: в логи и уведомление больше не попадает реальный URL
-// VK-метода (api.vk.com/method/wall.get и т.п.). Показываем понятную фразу.
-private String describeTask(String url) {
-    if (url == null || url.isEmpty()) return "Запрос";
-    if (url.contains("/wall.get"))            return "Чтение постов";
-    if (url.contains("/wall.createComment"))  return "Отправка комментария";
-    if (url.contains("/likes.add"))           return "Постановка лайка";
-    if (url.contains("/friends.add"))         return "Заявка в друзья";
-    if (url.contains("/messages.send"))       return "Отправка сообщения";
-    if (url.contains("/messages.setActivity"))return "Печатает...";
-    if (url.contains("/users.get"))           return "Получение профиля";
-    return "Запрос";
-}
+    // Человекочитаемое описание задачи — не палим URL VK-метода
+    private String describeTask(String url) {
+        if (url == null || url.isEmpty()) return "Запрос";
+        if (url.contains("/wall.get"))             return "Чтение постов";
+        if (url.contains("/wall.createComment"))   return "Отправка комментария";
+        if (url.contains("/likes.add"))            return "Постановка лайка";
+        if (url.contains("/friends.add"))          return "Заявка в друзья";
+        if (url.contains("/messages.send"))        return "Отправка сообщения";
+        if (url.contains("/messages.setActivity")) return "Печатает...";
+        if (url.contains("/users.get"))            return "Получение профиля";
+        return "Запрос";
+    }
 
-    
     // ===== ВЫПОЛНЕНИЕ ЗАДАНИЙ =====
     
     private void executeTasks(String response) {
@@ -319,30 +353,24 @@ private String describeTask(String url) {
                 String method = task.optString("method", "GET");
                 String body = task.optString("body", null);
                 
-                // Парсим заголовки
-               
-                    Map<String, String> headers = new HashMap<>();
-                    if (task.has("headers") && !task.isNull("headers")) {
-                        // ИСПРАВЛЕНО: headers может прийти как JSONArray ([]),
-                        // если в БД headers = NULL. getJSONObject() в этом случае
-                        // бросал исключение и весь пакет заданий терялся.
-                        Object headersRaw = task.opt("headers");
-                        if (headersRaw instanceof JSONObject) {
-                            JSONObject headersJson = (JSONObject) headersRaw;
-                            JSONArray keys = headersJson.names();
-                            if (keys != null) {
-                                for (int j = 0; j < keys.length(); j++) {
-                                    String key = keys.getString(j);
-                                    String value = headersJson.getString(key);
-                                    headers.put(key, value);
-                                }
+                Map<String, String> headers = new HashMap<>();
+                if (task.has("headers") && !task.isNull("headers")) {
+                    Object headersRaw = task.opt("headers");
+                    if (headersRaw instanceof JSONObject) {
+                        JSONObject headersJson = (JSONObject) headersRaw;
+                        JSONArray keys = headersJson.names();
+                        if (keys != null) {
+                            for (int j = 0; j < keys.length(); j++) {
+                                String key = keys.getString(j);
+                                String value = headersJson.getString(key);
+                                headers.put(key, value);
                             }
                         }
                     }
+                }
                 
                 if (url != null && taskId != null) {
                     url = url.replace("\\/", "/");
-                    // ИСПРАВЛЕНО: не показываем реальный URL VK, только человекочитаемое действие
                     addLog("📤 Задание [" + (i+1) + "]: " + describeTask(url));
                     
                     executeTask(taskId, url, method, headers, body);
@@ -358,22 +386,19 @@ private String describeTask(String url) {
                              Map<String, String> headers, String body) {
         totalTasks++;
         
-        // ИСПРАВЛЕНО: в уведомлении тоже не URL, а описание действия
-            updateNotification("Выполняю: " + describeTask(url));
+        updateNotification("Выполняю: " + describeTask(url));
         
         try {
             URL requestUrl = new URL(url);
             HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
             conn.setRequestMethod(method);
             
-            // ПРИМЕНЯЕМ ЗАГОЛОВКИ СЕРВЕРА
             if (headers != null && !headers.isEmpty()) {
                 for (Map.Entry<String, String> entry : headers.entrySet()) {
                     conn.setRequestProperty(entry.getKey(), entry.getValue());
                 }
             }
             
-            // ОТПРАВЛЯЕМ ТЕЛО ЗАПРОСА
             if (body != null && !body.isEmpty() && 
                 (method.equals("POST") || method.equals("PUT"))) {
                 conn.setDoOutput(true);
@@ -415,15 +440,13 @@ private String describeTask(String url) {
     
     // ===== ОТПРАВКА РЕЗУЛЬТАТОВ =====
     
-          private void sendResult(String taskId, int statusCode, String body) {
+    private void sendResult(String taskId, int statusCode, String body) {
         try {
-            // Обрезаем тело ответа, чтобы не перегружать сервер и БД
             String trimmedBody = body;
-            if (trimmedBody.length() > 500000) { // БЫЛО 50000
+            if (trimmedBody.length() > 500000) {
                 trimmedBody = trimmedBody.substring(0, 500000) + "...[обрезано]";
             }
             
-            // Используем JSONObject для безопасного экранирования кавычек и спецсимволов
             JSONObject json = new JSONObject();
             json.put("action", "submit_result");
             json.put("token", token);
@@ -525,14 +548,12 @@ private String describeTask(String url) {
         
         logBuilder.append(newLine);
         
-        // Ограничение размера
         if (logBuilder.length() > 30000) {
             logBuilder.delete(0, logBuilder.length() - 30000);
         }
         
         android.util.Log.d("PhoneProxy", message);
         
-        // Уведомляем Activity если подключено
         notifyLogChanged();
     }
     
@@ -546,7 +567,6 @@ private String describeTask(String url) {
         notifyLogChanged();
     }
     
-    // Callback для Activity
     private Runnable logChangeListener = null;
     
     public void setLogChangeListener(Runnable listener) {
@@ -587,8 +607,7 @@ private String describeTask(String url) {
         return createNotification("Прокси работает");
     }
     
-        private Notification createNotification(String text) {
-        // ВАЖНО: PendingIntent для открытия Activity при клике!
+    private Notification createNotification(String text) {
         Intent notificationIntent = new Intent(this, PhoneProxy.class);
         notificationIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         
@@ -610,16 +629,12 @@ private String describeTask(String url) {
         return builder
             .setContentTitle("Свой.Лид")
             .setContentText(text)
-            // ИСПРАВЛЕНО: своя монохромная иконка вместо системной ic_menu_manage.
-            // Android рисует её как белый силуэт (важен только alpha-канал).
             .setSmallIcon(R.drawable.ic_notification)
-            // Большая иконка справа в карточке уведомления (Android 5+).
-            // Используем цветную — так видно «бренд», а не системную заглушку.
             .setLargeIcon(android.graphics.BitmapFactory.decodeResource(
                 getResources(), R.mipmap.ic_launcher))
-            .setContentIntent(pendingIntent)  // КЛИК ОТКРЫВАЕТ ПРИЛОЖЕНИЕ!
+            .setContentIntent(pendingIntent)
             .setAutoCancel(false)
-            .setOngoing(true)  // Не закрывается свайпом
+            .setOngoing(true)
             .setPriority(Notification.PRIORITY_LOW)
             .build();
     }
@@ -635,6 +650,7 @@ private String describeTask(String url) {
     @Override
     public void onDestroy() {
         isRunning = false;
+        releaseWakeLock();
         addLog("🔚 Service уничтожен");
         super.onDestroy();
     }
