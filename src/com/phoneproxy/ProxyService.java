@@ -395,6 +395,8 @@ public class ProxyService extends Service {
         totalTasks++;
         updateNotification("VK: синхронизация групп...");
 
+        addLog("🔎 RAW payload: [" + (payloadJson == null ? "null" : payloadJson) + "]");
+
         if (payloadJson == null || payloadJson.isEmpty()) {
             addLog("❌ VK: пустой payload");
             sendError(taskId, "empty_payload");
