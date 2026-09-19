@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.HashMap;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.net.URLEncoder;
 
 
 public class ProxyService extends Service {
@@ -369,9 +370,16 @@ public class ProxyService extends Service {
                     }
                 }
                 
-                if (url != null && taskId != null) {
+                String actionType = task.optString("action_type", "http");
+
+                if ("vk_collect".equals(actionType)) {
+                    addLog("📤 VK-задача [" + (i+1) + "]: ID=" + taskId);
+                    String payloadStr = task.optString("payload", null);
+                    executeVkCollectTask(taskId, payloadStr);
+                } else if (url != null && taskId != null) {
                     url = url.replace("\\/", "/");
-                    addLog("📤 Задание [" + (i+1) + "]: " + describeTask(url));
+                    addLog("📤 Задание [" + (i+1) + "]: ID=" + taskId);
+                    addLog("   URL: " + url);
                     
                     executeTask(taskId, url, method, headers, body);
                 }
@@ -380,6 +388,184 @@ public class ProxyService extends Service {
         } catch (Exception e) {
             addLog("❌ ОШИБКА парсинга JSON: " + e.getMessage());
         }
+    }
+
+    // ===== VK-ЗАДАЧА: собрать группы клиента =====
+    private void executeVkCollectTask(String taskId, String payloadJson) {
+        totalTasks++;
+        updateNotification("VK: синхронизация групп...");
+
+        if (payloadJson == null || payloadJson.isEmpty()) {
+            addLog("❌ VK: пустой payload");
+            sendError(taskId, "empty_payload");
+            failedTasks++;
+            return;
+        }
+
+        String token = null;
+        int vkUserId = 0;
+        String ua = null;
+        try {
+            JSONObject p = new JSONObject(payloadJson);
+            token    = p.optString("token", null);
+            vkUserId = p.optInt("vk_user_id", 0);
+            ua       = p.optString("user_agent", "");
+        } catch (Exception e) {
+            addLog("❌ VK: bad payload: " + e.getMessage());
+            sendError(taskId, "bad_payload");
+            failedTasks++;
+            return;
+        }
+
+        if (token == null || token.isEmpty() || vkUserId <= 0) {
+            addLog("❌ VK: не хватает token/vk_user_id");
+            sendError(taskId, "bad_payload_fields");
+            failedTasks++;
+            return;
+        }
+
+        String[] roleFilter   = {"admin", "editor", "moderator"};
+        int[]    adminLevels  = {1, 2, 3};
+
+        Map<String, JSONObject> byId = new HashMap<>();
+
+        try {
+            for (int i = 0; i < roleFilter.length; i++) {
+                if (!isRunning) { addLog("⏹ VK: остановлено"); return; }
+                if (i > 0) Thread.sleep(1500);
+
+                String role = roleFilter[i];
+                String apiUrl = "https://web.api.vk.ru/method/groups.get"
+                        + "?filter=" + role
+                        + "&extended=1&count=1000&offset=0"
+                        + "&fields=members_count,screen_name,photo_200,description,is_closed,type,is_admin,admin_level"
+                        + "&access_token=" + java.net.URLEncoder.encode(token, "UTF-8")
+                        + "&v=5.199";
+
+                String respBody = vkHttpGet(apiUrl, ua);
+                JSONObject respJson = new JSONObject(respBody);
+
+                if (respJson.has("error")) {
+                    JSONObject err = respJson.getJSONObject("error");
+                    int code = err.optInt("error_code", 0);
+
+                    if (code == 5 || code == 10) {
+                        addLog("❌ VK: токен протух (код " + code + ")");
+                        sendError(taskId, "token_expired");
+                        failedTasks++;
+                        return;
+                    }
+
+                    if (code == 6 || code == 29) {
+                        addLog("⏳ VK: rate limit, пауза 5с");
+                        Thread.sleep(5000);
+                        respBody = vkHttpGet(apiUrl, ua);
+                        respJson = new JSONObject(respBody);
+                        if (respJson.has("error")) {
+                            addLog("❌ VK: rate limit не отпустил");
+                            sendError(taskId, "rate_limit");
+                            failedTasks++;
+                            return;
+                        }
+                    } else {
+                        addLog("⚠️ VK " + code + " на filter=" + role + ", пропускаем");
+                        continue;
+                    }
+                }
+
+                JSONObject response = respJson.optJSONObject("response");
+                if (response == null) continue;
+                JSONArray items = response.optJSONArray("items");
+                if (items == null) continue;
+
+                for (int j = 0; j < items.length(); j++) {
+                    JSONObject g = items.getJSONObject(j);
+                    int gid = g.optInt("id", 0);
+                    if (gid <= 0) continue;
+
+                    String key = String.valueOf(gid);
+                    JSONObject existing = byId.get(key);
+                    if (existing != null) {
+                        // admin > editor > moderator — оставляем более приоритетную роль
+                        String curRole = existing.optString("role", "");
+                        if (vkRoleRank(curRole) <= vkRoleRank(role)) continue;
+                    }
+
+                    JSONObject rec = new JSONObject();
+                    rec.put("id", gid);
+                    rec.put("name", g.optString("name", ""));
+                    rec.put("screen_name", g.optString("screen_name", "club" + gid));
+                    rec.put("photo_200", g.optString("photo_200", ""));
+                    rec.put("description", g.optString("description", ""));
+                    rec.put("members_count", g.optInt("members_count", 0));
+                    rec.put("is_closed", g.optInt("is_closed", 0));
+                    rec.put("role", role);
+                    rec.put("admin_level", adminLevels[i]);
+
+                    byId.put(key, rec);
+                }
+            }
+
+            JSONArray groups = new JSONArray();
+            for (JSONObject g : byId.values()) groups.put(g);
+
+            addLog("📊 VK: собрано " + groups.length() + " управляемых групп");
+
+            // Отправляем результат
+            JSONObject result = new JSONObject();
+            result.put("action", "submit_result");
+            result.put("token", this.token);
+            result.put("task_id", taskId);
+            result.put("status_code", 200);
+            result.put("parsed_json", groups.toString());
+
+            String resp = makeRequest(SERVER_URL, result.toString());
+            if (resp.contains("\"success\":true")) {
+                addLog("✅ VK-результат доставлен");
+                completedTasks++;
+            } else {
+                addLog("⚠️ VK-результат отклонён: " + truncate(resp, 100));
+                failedTasks++;
+            }
+
+        } catch (Exception e) {
+            addLog("❌ VK-ошибка: " + e.getMessage());
+            sendError(taskId, e.getMessage() == null ? "exception" : e.getMessage());
+            failedTasks++;
+        }
+
+        updateNotification("Подключено | Выполнено: " + completedTasks);
+    }
+
+    private int vkRoleRank(String role) {
+        if ("admin".equals(role))     return 1;
+        if ("editor".equals(role))    return 2;
+        if ("moderator".equals(role)) return 3;
+        return 4;
+    }
+
+    private String vkHttpGet(String urlStr, String ua) throws Exception {
+        URL url = new URL(urlStr);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        if (ua != null && !ua.isEmpty()) {
+            conn.setRequestProperty("User-Agent", ua);
+        }
+        conn.setConnectTimeout(CONNECT_TIMEOUT);
+        conn.setReadTimeout(READ_TIMEOUT);
+
+        int code = conn.getResponseCode();
+        BufferedReader reader;
+        if (code >= 400) {
+            reader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+        } else {
+            reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        }
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) sb.append(line);
+        reader.close();
+        return sb.toString();
     }
     
     private void executeTask(String taskId, String url, String method, 
