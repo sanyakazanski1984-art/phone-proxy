@@ -395,7 +395,9 @@ public class ProxyService extends Service {
         totalTasks++;
         updateNotification("VK: синхронизация групп...");
 
-        addLog("🔎 RAW payload: [" + (payloadJson == null ? "null" : payloadJson) + "]");
+        String _pv = payloadJson == null ? "null" : payloadJson;
+if (_pv.length() > 60) _pv = _pv.substring(0, 60) + "...(len=" + payloadJson.length() + ")";
+addLog("🔎 payload preview: " + _pv);
 
         if (payloadJson == null || payloadJson.isEmpty()) {
             addLog("❌ VK: пустой payload");
@@ -405,12 +407,12 @@ public class ProxyService extends Service {
         }
 
         String token = null;
-        int vkUserId = 0;
+        long vkUserId = 0;
         String ua = null;
         try {
             JSONObject p = new JSONObject(payloadJson);
             token    = p.optString("token", null);
-            vkUserId = p.optInt("vk_user_id", 0);
+            vkUserId = p.optLong("vk_user_id", 0);
             ua       = p.optString("user_agent", "");
         } catch (Exception e) {
             addLog("❌ VK: bad payload: " + e.getMessage());
@@ -482,7 +484,7 @@ public class ProxyService extends Service {
 
                 for (int j = 0; j < items.length(); j++) {
                     JSONObject g = items.getJSONObject(j);
-                    int gid = g.optInt("id", 0);
+                    long gid = g.optLong("id", 0);
                     if (gid <= 0) continue;
 
                     String key = String.valueOf(gid);
